@@ -43,12 +43,23 @@ class Session(object):
         for key, value in query.iteritems():
             if re.match('^(?:eq)|(?:ne)|(?:gt)|(?:lt)|(?:gte)|(?:lte)$', key):
                 newvalue = []
+                f = None
                 for item in value:
                     if isinstance(item, tuple):
                         # identifier; we need to rename it appropriately.
-                        newvalue.append((cls.__dict__[item[0]].name,))
-                    else:
-                        newvalue.append(self.value_to_pvalue(item))
+                        f = cls.__dict__[item[0]]
+                        newvalue.append((f.name,))
+                for item in value:
+                    if not isinstance(item, tuple):
+                        if isinstance(item, field.Field):
+                            newvalue.append(self.field_to_pfield(item))
+                        elif f is not None:
+                            newf = f.clone()
+                            newf.canmodify = True
+                            newf.set(item)
+                            newvalue.append(self.field_to_pfield(newf))
+                        else:
+                            newvalue.append(self.value_to_pvalue(item))
                 ret[key] = newvalue
             elif re.match('^(?:and)|(?:or)|(?:nor)|(?:not)', key):
                 newvalue = []
@@ -108,7 +119,7 @@ class Session(object):
         if isinstance(value, field.Field):
             value = value.value
         if isinstance(value, (list, set)):
-            return [self.value_to_pvalue(item) for item in value]
+            return [self.field_to_pfield(item) if isinstance(item, field.Field) else self.value_to_pvalue(item) for item in value]
         else:
             return value
 
@@ -121,7 +132,7 @@ class Session(object):
                 'item': {}
                 }
             for f in gob.__dict__.itervalues():
-                if isinstance(f, field.Field):
+                if isinstance(f, field.Field) and f.modifiable:
                     op['item'][f.name] = self.field_to_pfield(f)
             operations['additions'].append(op)
 

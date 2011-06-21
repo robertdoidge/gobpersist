@@ -4,11 +4,12 @@ from copy import copy as base_clone
 import operator
 import datetime
 import uuid
+import iso8601
 
 class Field(object):
     """An abstract base class for defining a field type."""
 
-    def __init__(self, null=False, unique=False, primary_key = False, revision_tag = False, name = None, default=lambda: None):
+    def __init__(self, null=False, unique=False, primary_key = False, revision_tag = False, name = None, default=lambda: None, modifiable=True):
         self._key = None
         self.dirty = True
         self.immutable = False
@@ -17,11 +18,13 @@ class Field(object):
         self.default = default
         self.primary_key = primary_key
         self.revision_tag = revision_tag
+        self.modifiable = modifiable
         self.name = name
 
     def prepare_persist(self):
         if 'value' not in self.__dict__:
-            self.set(self.default())
+            if self.modifiable:
+                self.set(self.default() if callable(self.default) else self.default)
 
     def trip_set(self):
         assert not self.immutable, "If hash(field) is called, field is marked as immutable"
@@ -56,8 +59,9 @@ class Field(object):
         instance.__dict__[self._key].set(None)
 
     def validate(self, value):
-        if value == None and not self.null:
-            raise ValueError("'None' not allowed")
+        assert self.modifiable, "Field is not modifiable"
+        if value is None and not self.null:
+            raise ValueError("'None' not allowed for field '%s'" % self.name)
 
     def clone(self):
         ret = base_clone(self)
@@ -103,9 +107,17 @@ class BooleanField(Field):
 class DateTimeField(Field):
     """A field to represent a point in time."""
 
+    def _set(self, value):
+        if isinstance(value, (unicode, str)):
+            value = iso8601.parse_datetime(value)
+        super(DateTimeField, self)._set(value)
+
     def validate(self, value):
         super(DateTimeField, self).validate(value)
-        if not isinstance(value, datetime.datetime):
+        if isinstance(value, (unicode, str)):
+            if iso8601.ISO8601_RE.match(value) is None:
+                raise ValueError("'%s' does not appear to be an ISO 8601 string" % value)
+        elif not isinstance(value, datetime.datetime):
             raise TypeError("'%s' object is not datetime" % type(value))
 
 class StringField(Field):
@@ -119,6 +131,12 @@ class StringField(Field):
         super(StringField, self).__init__(*args, **kwargs)
 
     def _set(self, value):
+        if value is None:
+            self.value = None
+            self.value_encoded = None
+            self.value_decoded = None
+            super(StringField, self)._set(None)
+            return
         if self.encoding == 'binary':
             if isinstance(value, unicode):
                 self.value_encoded = value.encode('utf-8')
@@ -138,7 +156,9 @@ class StringField(Field):
 
     def validate(self, value):
         super(StringField, self).validate(value)
-        if not isinstance(value, (unicode, bytes)):
+        if value is None:
+            return
+        if not isinstance(value, (unicode, str)):
             raise TypeError("'%s' object is neither unicode nor bytes" % type(value))
         if self.max_length is not None \
                 and len(value) > self.max_length:
@@ -459,6 +479,8 @@ class UUIDField(StringField):
 
     def validate(self, value):
         super(UUIDField, self).validate(value)
+        if value is None:
+            return
         if not self.validate_re.match(value):
             raise ValueError("'%s' is not a valid UUID" % str(value))
 

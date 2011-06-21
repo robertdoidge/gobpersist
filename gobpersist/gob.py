@@ -36,8 +36,12 @@ class Gob(object):
             f_key = field_key(key)
             if f_key not in self.__dict__:
                 raise TypeError("__init__() got an unexpected keyword argument '%s'" % key)
+            can_modify=self.__dict__[f_key].modifiable
+            if(_incoming_data):
+                self.__dict__[f_key].modifiable = True
             self.__dict__[f_key].set(value)
             if(_incoming_data):
+                self.__dict__[f_key].modifiable = can_modify
                 self.__dict__[f_key].reset_state()
 
     def save(self):
