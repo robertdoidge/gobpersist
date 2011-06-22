@@ -7,30 +7,43 @@ def field_key(key):
 class GobMetaclass(type):
     """Metaclass for the Gob class."""
     def __init__(cls, *args, **kwargs):
-        for key, value in cls.__dict__.iteritems():
-            if isinstance(value, field.Field):
-                value._key = field_key(key)
-                if value.name is None:
-                    value.name = key
-        if 'collection_name' not in cls.__dict__:
-            cls.collection_name = cls.__name__.lower() + 's'
+        cls.reload_class()
         super(GobMetaclass, cls).__init__(*args, **kwargs)
 
 class Gob(object):
     """Abstract type to represent a persistent object."""
     __metaclass__ = GobMetaclass
 
+    @classmethod
+    def reload_class(cls):
+        primary_key = None
+        for key, value in cls.__dict__.iteritems():
+            if isinstance(value, field.Field):
+                value._key = field_key(key)
+                if value.name is None:
+                    value.name = key
+                if value.primary_key:
+                    primary_key = value
+            elif isinstance(value, field.ForeignCollection):
+                value._key = field_key(key)
+                if value.foreign_class == 'self':
+                    value.foreign_class = cls
+        cls.primary_key = primary_key
+        if 'collection_name' not in cls.__dict__:
+            cls.collection_name = cls.__name__.lower() + 's'
+
     def __init__(self, session, _incoming_data=False, **kwdict):
         self.persisted = _incoming_data
         self.session = session
         self.dirty = False
-        for value in self.__class__.__dict__.itervalues():
+        for key in dir(self.__class__):
+            value = getattr(self.__class__, key)
             if isinstance(value, field.Field):
                 value = value.clone()
                 value.instance = self
                 self.__dict__[value._key] = value
                 if value.primary_key:
-                    self.primary_key = value
+                    self.__dict__['primary_key'] = value
 
         for key, value in kwdict.iteritems():
             f_key = field_key(key)
@@ -66,3 +79,6 @@ class Gob(object):
 
     def path(self):
         return (self.__class__, self.primary_key)
+
+    def __repr__(self):
+        return "%s(%s)" % (self.__class__.__name__, ', '.join(set(["%s=%s" % (value.name, repr(value)) for value in filter(lambda x: isinstance(x, field.Field), self.__dict__.values())])))

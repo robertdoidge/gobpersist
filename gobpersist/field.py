@@ -9,7 +9,7 @@ import iso8601
 class Field(object):
     """An abstract base class for defining a field type."""
 
-    def __init__(self, null=False, unique=False, primary_key = False, revision_tag = False, name = None, default=lambda: None, modifiable=True):
+    def __init__(self, null=False, unique=False, primary_key=False, revision_tag=False, name=None, default=None, modifiable=True):
         self._key = None
         self.dirty = True
         self.immutable = False
@@ -20,16 +20,19 @@ class Field(object):
         self.revision_tag = revision_tag
         self.modifiable = modifiable
         self.name = name
+        self.value = None
+        self.has_value = False
 
     def prepare_persist(self):
-        if 'value' not in self.__dict__:
-            if self.modifiable:
-                self.set(self.default() if callable(self.default) else self.default)
+        if not self.has_value:
+            self.set(self.default() if callable(self.default) else self.default)
 
     def trip_set(self):
         assert not self.immutable, "If hash(field) is called, field is marked as immutable"
         self.dirty = True
-        self.instance.dirty = True
+        self.has_value = True
+        if self.instance is not None:
+            self.instance.dirty = True
 
     def reset_state(self):
         self.immutable = False
@@ -68,10 +71,10 @@ class Field(object):
         ret.immutable = False
         return ret
 
+    def __repr__(self):
+        return repr(self.value)
     def __str__(self):
-        return "%s<%s>" % (self.__class__.__name__, str(self.value))
-
-
+        return str(self.value)
     def __lt__(self, other):
         return self.value < other
     def __le__(self, other):
@@ -95,6 +98,35 @@ class Field(object):
         return isinstance(self, cls) or isinstance(self.value, cls)
     def __subclasscheck__(self, cls):
         return issubclass(self, cls) or issubclass(self.value, cls)
+
+class ForeignCollection(object):
+    """A field to represent a foreign collection or object"""
+
+    def __init__(self, foreign_class, local_key, foreign_key, name=None, many=True):
+        self.foreign_class = foreign_class
+        self.foreign_key = foreign_key
+        self.local_key = local_key
+        self.many = many
+        self.name = name
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self
+        elif self._key in instance.__dict__:
+            return instance.__dict__[self._key]
+        else:
+            if self.name is not None:
+                ret = instance.session.query((instance.__class__, instance.primary_key, self))
+            else:
+                ret = instance.session.query((self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key).__get__(instance, owner)]})
+            instance.__dict__[self._key] = ret
+            if self.many:
+                return ret
+            else:
+                if ret:
+                    return ret[0]
+                else:
+                    return None
 
 class BooleanField(Field):
     """A field to represent a boolean value."""
@@ -168,6 +200,8 @@ class StringField(Field):
         if not self.validate_extra(value):
             raise ValueError("'%s' failed validation %s" % (value, repr(self.validate_extra)))
 
+    def __repr__(self):
+        return repr(self.value)
     def __str__(self):
         return self.value
     def __unicode__(self):
@@ -425,10 +459,15 @@ class IntegerField(NumericField):
 
     def validate(self, value):
         super(IntegerField, self).validate(value)
-        if not isinstance(value, int):
+        if not isinstance(value, (int,long)):
             raise TypeError("'%s' object is not int" % type(value))
         if value > self.maximum or value < self.minimum:
             raise ValueError("'%s' out of range" % value)
+
+    def _set(self, value):
+        if isinstance(value, int) and (self.precision == 64 or (self.precision == 32 and self.unsigned)):
+            value = long(value)
+        super(IntegerField, self)._set(value)
 
     def bit_length(self):
         return self.value.bit_length()

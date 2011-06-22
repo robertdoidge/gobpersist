@@ -47,7 +47,7 @@ class Session(object):
                 for item in value:
                     if isinstance(item, tuple):
                         # identifier; we need to rename it appropriately.
-                        f = cls.__dict__[item[0]]
+                        f = getattr(cls, item[0])
                         newvalue.append((f.name,))
                 for item in value:
                     if not isinstance(item, tuple):
@@ -55,7 +55,8 @@ class Session(object):
                             newvalue.append(self.field_to_pfield(item))
                         elif f is not None:
                             newf = f.clone()
-                            newf.canmodify = True
+                            newf.modifiable = True
+                            newf.instance = None
                             newf.set(item)
                             newvalue.append(self.field_to_pfield(newf))
                         else:
@@ -70,18 +71,55 @@ class Session(object):
                 raise QueryError("Invalid query operator '%s'" % key)
         return ret
 
-    def path_to_ppath(self, cls, path):
-        return tuple([pathelem.collection_name if isinstance(pathelem, type) else self.value_to_pvalue(pathelem) for pathelem in path])
+    def path_to_ppath(self, path):
+        if len(path) < 1:
+            return path
+        ret = []
+        cls = path[0]
+        ret.append(cls.collection_name)
+        f = cls.primary_key
+        for pathelem in path[1:]:
+            if f is None:
+                if isinstance(pathelem, field.ForeignCollection):
+                    f = pathelem
+                else:
+                    f = getattr(cls, pathelem)
+                cls = f.foreign_class
+                ret.append(f.name)
+                f = getattr(cls, f.foreign_key)
+            else:
+                if isinstance(pathelem, field.Field):
+                    ret.append(self.field_to_pfield(pathelem))
+                else:
+                    newf = f.clone()
+                    newf.modifiable = True
+                    newf.instance = None
+                    newf.set(pathelem)
+                    ret.append(self.field_to_pfield(newf))
+                f = None
+        return tuple(ret)
+
+    def path_to_cls(self, path):
+        if len(path) < 1:
+            return None
+        cls = path[0]
+        for pathelem in path[2::2]:
+            if isinstance(pathelem, field.ForeignCollection):
+                cls = pathelem.foreign_class
+            else:
+                cls = getattr(cls, pathelem).foreign_class
+        return cls
 
     def retrieve_to_pretrieve(self, cls, retrieve):
-        return [cls.__dict__[retrieval].name for retrieval in retrieve]
+        return [getattr(cls, retrieval).name for retrieval in retrieve]
 
-    def query(self, path, query, retrieve=None, offset=None, limit=None):
-        cls = path[-1] if isinstance(path[-1], type) else path[-2]
+    def query(self, path, query=None, retrieve=None, offset=None, limit=None):
+        cls = self.path_to_cls(path)
         if retrieve is not None:
             retrieve = self.retrieve_to_pretrieve(cls, retrieve)
-        path = self.path_to_ppath(cls, path)
-        query = self.query_to_pquery(cls, query)
+        path = self.path_to_ppath(path)
+        if query is not None:
+            query = self.query_to_pquery(cls, query)
         if cls.collection_name not in self.collections:
             self.collections[cls.collection_name] = {}
         results = [self.create_gob(cls, result) for result in self.do_query(path, query, retrieve, offset, limit)]
@@ -99,11 +137,11 @@ class Session(object):
         return cls(self, _incoming_data=True, **dictionary)
     
     def update_object(self, gob, updater):
-        for key, value in gob.__dict__:
+        for value in gob.__dict__.itervalues():
             if isinstance(value, field.Field) and not value.dirty:
-                value.value = updater.__dict__[key].value
+                value.value = updater.__dict__[value._key].value
 
-    def do_query(self, path, query):
+    def do_query(self, path, query, retrieve, offset, limit):
         # Must be defined for a subclass
         # returns a list of dicts representing each object
         pass
@@ -128,7 +166,7 @@ class Session(object):
         operations['additions'] = []
         for gob in self.operations['additions']:
             op = {
-                'path': self.path_to_ppath(gob.__class__, gob.path())[0:-1],
+                'path': self.path_to_ppath(gob.path())[0:-1],
                 'item': {}
                 }
             for f in gob.__dict__.itervalues():
@@ -139,7 +177,7 @@ class Session(object):
         operations['updates'] = []
         for gob in self.operations['updates']:
             op = {
-                'path': self.path_to_ppath(gob.__class__, gob.path()),
+                'path': self.path_to_ppath(gob.path()),
                 'item': {}
                 }
             for f in gob.__dict__.itervalues():
@@ -155,7 +193,7 @@ class Session(object):
         operations['removals'] = []
         for gob in self.operations['removals']:
             op = {
-                'path': self.path_to_ppath(gob.__class__, gob.path())
+                'path': self.path_to_ppath(gob.path())
                 }
             for f in gob.__dict__.itervalues():
                 if isinstance(f, field.Field) and f.revision_tag:
