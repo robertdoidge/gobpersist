@@ -32,7 +32,7 @@ class Gob(object):
         if 'collection_name' not in cls.__dict__:
             cls.collection_name = cls.__name__.lower() + 's'
 
-    def __init__(self, session, _incoming_data=False, **kwdict):
+    def __init__(self, session=None, _incoming_data=False, **kwdict):
         self.persisted = _incoming_data
         self.session = session
         self.dirty = False

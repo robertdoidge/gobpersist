@@ -1,4 +1,5 @@
 from __future__ import absolute_import
+from . import schema
 import re
 from copy import copy as base_clone
 import operator
@@ -115,15 +116,18 @@ class ForeignCollection(object):
         elif self._key in instance.__dict__:
             return instance.__dict__[self._key]
         else:
-            if self.name is not None:
-                ret = instance.session.query((instance.__class__, instance.primary_key, self))
-            else:
-                ret = instance.session.query((self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key).__get__(instance, owner)]})
-            instance.__dict__[self._key] = ret
             if self.many:
-                return ret
+                if self.name is not None:
+                    ret = schema.SchemaCollection(instance.session, (instance.__class__, instance.primary_key, self))
+                else:
+                    ret = schema.SchemaCollection(instance.session, (self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key).__get__(instance, owner)]})
             else:
+                if self.name is not None:
+                    ret = instance.session.query((instance.__class__, instance.primary_key, self))
+                else:
+                    ret = instance.session.query((self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key).__get__(instance, owner)]})
                 if ret:
+                    instance.__dict__[self._key] = ret[0]
                     return ret[0]
                 else:
                     return None
