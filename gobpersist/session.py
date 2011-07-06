@@ -1,5 +1,5 @@
-from __future__ import absolute_import
-from . import field
+# Moved to end of file to avoid mutual dependency
+# import gobpersist.field
 
 import re
 
@@ -22,7 +22,9 @@ class _SessionMeta(type):
         for key, value in cls.__dict__.iteritems():
             if isinstance(value, _backend_delegable):
                 add_dict['_' + key] = value.orig_f
-        cls.__dict__ += add_dict
+        for key, value in add_dict.iteritems():
+            setattr(cls, key, value)
+        super(_SessionMeta, cls).__init__(*args, **kwargs)
 
 class Session(object):
     """Generic session object.  Delegates whatever possible to its backend"""
@@ -274,3 +276,5 @@ class Session(object):
             'removals': {},
             'updates': {}
             }
+
+import gobpersist.schema

@@ -1,5 +1,5 @@
-from __future__ import absolute_import
-from . import field
+# The import dragons will keep you from doing something more obvious.
+from gobpersist import field
 
 def field_key(key):
     return '_Field__' + key

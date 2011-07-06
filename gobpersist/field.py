@@ -1,5 +1,5 @@
-from __future__ import absolute_import
-from . import schema
+# moved to end of file to avoid mutual dependency
+# import gobpersist.schema
 import re
 from copy import copy as base_clone
 import operator
@@ -729,3 +729,5 @@ class SetField(MultiField):
     def __hash__(self):
         self.value = frozenset(self.value)
         return super(ListField, self).__hash__(self)
+
+import gobpersist.schema

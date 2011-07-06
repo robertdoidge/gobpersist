@@ -1,5 +1,5 @@
-from __future__ import absolute_import
-from . import gob
+# Moved to end to avoid mutual dependency
+# import gobpersist.gob
 
 class SchemaCollection(object):
     def __init__(self, session, path, sticky=None):
@@ -71,3 +71,5 @@ class Schema(object):
 
     def __getattr__(self, name):
         return getattr(self.session, name)
+
+import gobpersist.gob
