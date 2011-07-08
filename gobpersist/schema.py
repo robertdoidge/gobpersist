@@ -1,11 +1,12 @@
-# Moved to end to avoid mutual dependency
-# import gobpersist.gob
+from __future__ import absolute_import
+from . import gob
 
 class SchemaCollection(object):
-    def __init__(self, session, path, sticky=None):
+    def __init__(self, session, path, sticky=None, autoset=None):
         self.session = session
         self.path = path
         self.sticky = sticky
+        self.autoset = autoset
 
     def _translate_qelem(self, k, v):
         if k == 'and':
@@ -21,15 +22,15 @@ class SchemaCollection(object):
 
     def _translate_and(self, query):
         ret = {'and' : []}
-        for k, v in query:
+        for k, v in query.iteritems():
             ret['and'].append(self._translate_qelem(k, v))
         return ret
 
 
     def _translate_query(self, query):
-        ret = _translate_and(self, query)
-        if sticky is not None:
-            ret['and'].append(sticky)
+        ret = self._translate_and(query)
+        if self.sticky is not None:
+            ret['and'].append(self.sticky)
         return ret
 
     def list(self, _query=None, **kwargs):
@@ -37,12 +38,16 @@ class SchemaCollection(object):
             _query = self._translate_query(kwargs)
         return self.session.query(self.path, _query)
 
-    def get(self, _query=None, **kwargs):
-        res = self.session.query(self.path, _query, **kwargs)
+    def get(self, primary_key):
+        path = (self.path[0], primary_key)
+        res = self.session.query(path)
         return res[0] if res else None
 
     def add(self, gob):
         gob.session = self.session
+        if self.autoset is not None:
+            for key, value in self.autoset.iteritems:
+                setattr(gob, key, value)
         gob.save()
 
     def update(self, gob=None, set=None, query=None, _query=None):
@@ -65,11 +70,9 @@ class Schema(object):
     def __init__(self, session):
         for name in dir(self):
             collection = getattr(self, name)
-            if isinstance(collection, gob.Gob):
+            if isinstance(collection, type) and issubclass(collection, gob.Gob):
                 setattr(self, name, SchemaCollection(session, (collection,)))
         self.session = session
 
     def __getattr__(self, name):
         return getattr(self.session, name)
-
-import gobpersist.gob

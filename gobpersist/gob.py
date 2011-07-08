@@ -1,5 +1,5 @@
-# The import dragons will keep you from doing something more obvious.
-from gobpersist import field
+from __future__ import absolute_import
+from . import field
 
 def field_key(key):
     return '_Field__' + key
@@ -49,8 +49,8 @@ class Gob(object):
             f_key = field_key(key)
             if f_key not in self.__dict__:
                 raise TypeError("__init__() got an unexpected keyword argument '%s'" % key)
-            can_modify=self.__dict__[f_key].modifiable
             if(_incoming_data):
+                can_modify=self.__dict__[f_key].modifiable
                 self.__dict__[f_key].modifiable = True
             self.__dict__[f_key].set(value)
             if(_incoming_data):

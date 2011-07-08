@@ -1,7 +1,8 @@
-# Moved to end of file to avoid mutual dependency
-# import gobpersist.field
+from __future__ import absolute_import
+from . import field
 
 import re
+import types
 
 class QueryError(Exception):
     """Raised when a malformed query is detected."""
@@ -9,12 +10,11 @@ class QueryError(Exception):
 class _backend_delegable(object):
     def __init__(self, f):
         self.orig_f = f
-    def __call__(self, outer_self, *args, **kwargs):
-        delegated_f = getattr(outer_self.backend, func.__name__, None)
-        if delegated_f is None:
-            self.orig_f(outer_self, *args, **kwargs)
-        else:
-            delegated_f(*args, **kwargs)
+    def __get__(self, instance, owner):
+        delegated_f = getattr(instance.backend, self.orig_f.__name__, None)
+        if delegated_f is not None:
+            return delegated_f
+        return types.MethodType(self.orig_f, instance, owner)
 
 class _SessionMeta(type):
     def __init__(cls, *args, **kwargs):
@@ -99,6 +99,7 @@ class Session(object):
 
     @_backend_delegable
     def path_to_ppath(self, path):
+        print path
         if len(path) < 1:
             return path
         ret = []
@@ -276,5 +277,3 @@ class Session(object):
             'removals': {},
             'updates': {}
             }
-
-import gobpersist.schema

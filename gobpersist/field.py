@@ -1,5 +1,6 @@
-# moved to end of file to avoid mutual dependency
-# import gobpersist.schema
+from __future__ import absolute_import
+# Moved to the middle of a function to avoid cyclical dependency
+# from . import schema
 import re
 from copy import copy as base_clone
 import operator
@@ -63,7 +64,7 @@ class Field(object):
         instance.__dict__[self._key].set(None)
 
     def validate(self, value):
-        assert self.modifiable, "Field is not modifiable"
+        assert self.modifiable if self.instance.persisted else True, "Field is not modifiable"
         if value is None and not self.null:
             raise ValueError("'None' not allowed for field '%s'" % self.name)
 
@@ -117,15 +118,22 @@ class ForeignCollection(object):
             return instance.__dict__[self._key]
         else:
             if self.many:
+                # The import dragons will keep you from doing something more obvious.
+                from . import schema
+                local_key = getattr(instance, self.local_key)
                 if self.name is not None:
-                    ret = schema.SchemaCollection(instance.session, (instance.__class__, instance.primary_key, self))
+                    ret = schema.SchemaCollection(instance.session, (instance.__class__, instance.primary_key, self),
+                                                  autoset={self.foreign_key : local_key})
                 else:
-                    ret = schema.SchemaCollection(instance.session, (self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key).__get__(instance, owner)]})
+                    ret = schema.SchemaCollection(instance.session, (self.foreign_class,),
+                                                  sticky={'eq': [(self.foreign_key,), local_key]},
+                                                  autoset={self.foreign_key : local_key})
+                return ret
             else:
                 if self.name is not None:
                     ret = instance.session.query((instance.__class__, instance.primary_key, self))
                 else:
-                    ret = instance.session.query((self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key).__get__(instance, owner)]})
+                    ret = instance.session.query((self.foreign_class,), {'eq': [(self.foreign_key,), getattr(instance, self.local_key)]})
                 if ret:
                     instance.__dict__[self._key] = ret[0]
                     return ret[0]
@@ -153,7 +161,7 @@ class DateTimeField(Field):
         if isinstance(value, (unicode, str)):
             if iso8601.ISO8601_RE.match(value) is None:
                 raise ValueError("'%s' does not appear to be an ISO 8601 string" % value)
-        elif not isinstance(value, datetime.datetime):
+        elif not isinstance(value, datetime.datetime) and value is not None:
             raise TypeError("'%s' object is not datetime" % type(value))
 
 class StringField(Field):
@@ -207,7 +215,7 @@ class StringField(Field):
     def __repr__(self):
         return repr(self.value)
     def __str__(self):
-        return self.value
+        return self.value if self.value is not None else str(None)
     def __unicode__(self):
         return self.value_decoded if self.value_decoded is not None else unicode(self.value)
     def decode(self, *args, **kwargs):
@@ -729,5 +737,3 @@ class SetField(MultiField):
     def __hash__(self):
         self.value = frozenset(self.value)
         return super(ListField, self).__hash__(self)
-
-import gobpersist.schema
