@@ -7,31 +7,31 @@ import types
 class QueryError(Exception):
     """Raised when a malformed query is detected."""
 
-class _backend_delegable(object):
+class backend_delegable(object):
     def __init__(self, f):
         self.orig_f = f
     def __get__(self, instance, owner):
         delegated_f = getattr(instance.backend, self.orig_f.__name__, None)
         if delegated_f is not None:
             return delegated_f
-        return types.MethodType(self.orig_f, instance, owner)
+        return types.MethodType(self.orig_f, instance, instance.__class__)
 
-class _SessionMeta(type):
+class BackendDelegatorMeta(type):
     def __init__(cls, *args, **kwargs):
         add_dict = {}
         for key, value in cls.__dict__.iteritems():
-            if isinstance(value, _backend_delegable):
+            if isinstance(value, backend_delegable):
                 add_dict['_' + key] = value.orig_f
         for key, value in add_dict.iteritems():
             setattr(cls, key, value)
-        super(_SessionMeta, cls).__init__(*args, **kwargs)
+        super(BackendDelegatorMeta, cls).__init__(*args, **kwargs)
 
 class Session(object):
     """Generic session object.  Delegates whatever possible to its backend"""
 
-    __metaclass__ = _SessionMeta
+    __metaclass__ = BackendDelegatorMeta
 
-    def __init__(self, backend):
+    def __init__(self, backend, storage_engine=None):
         self.collections = {}
         self.operations = {
             'additions': set(),
@@ -40,30 +40,33 @@ class Session(object):
             }
         self.backend = backend
         self.backend.session = self
+        if storage_engine is not None:
+            self.storage_engine = storage_engine
+            self.storage_engine.session = self
 
-    @_backend_delegable
+    @backend_delegable
     def register_gob(self, gob):
         if gob.collection_name not in self.collections:
             self.collections[gob.collection_name] = {}
         self.collections[gob.collection_name][gob.primary_key] = gob
 
-    @_backend_delegable
+    @backend_delegable
     def add(self, gob):
         gob.prepare_persist()
         self._register_gob(gob)
         self.operations['additions'].add(gob)
 
-    @_backend_delegable
+    @backend_delegable
     def update(self, gob):
         gob.prepare_persist()
         self.operations['updates'].add(gob)
 
-    @_backend_delegable
+    @backend_delegable
     def remove(self, gob):
         gob.prepare_persist()
         self.operations['removals'].add(gob)
 
-    @_backend_delegable
+    @backend_delegable
     def query_to_pquery(self, cls, query):
         ret = {}
         for key, value in query.iteritems():
@@ -97,9 +100,8 @@ class Session(object):
                 raise QueryError("Invalid query operator '%s'" % key)
         return ret
 
-    @_backend_delegable
+    @backend_delegable
     def path_to_ppath(self, path):
-        print path
         if len(path) < 1:
             return path
         ret = []
@@ -138,23 +140,23 @@ class Session(object):
                 cls = getattr(cls, pathelem).foreign_class
         return cls
 
-    @_backend_delegable
+    @backend_delegable
     def retrieve_to_pretrieve(self, cls, retrieve):
         return set([getattr(cls, retrieval).name for retrieval in retrieve])
 
-    @_backend_delegable
+    @backend_delegable
     def update_query(self, path, set, query=None):
         for item in self.query(path, query, retrieve=[]):
             for k, v in set:
                 setattr(item, k, v)
             item.save()
 
-    @_backend_delegable
+    @backend_delegable
     def remove_query(self, path, query):
         for item in self.query(path, query, retrieve=[]):
             item.remove()
 
-    @_backend_delegable
+    @backend_delegable
     def query(self, path, query=None, retrieve=None, offset=None, limit=None):
         cls = self._path_to_cls(path)
         if retrieve is not None:
@@ -182,27 +184,35 @@ class Session(object):
     def _create_gob(self, cls, dictionary):
         return cls(self, _incoming_data=True, **dictionary)
     
-    def _update_object(self, gob, updater):
+    def _update_object(self, gob, updater, force=False):
         for value in gob.__dict__.itervalues():
-            if isinstance(value, field.Field) and not value.dirty:
+            if isinstance(value, field.Field) and (not value.dirty or force):
                 value.value = updater.__dict__[value._key].value
 
-    @_backend_delegable
+    @backend_delegable
     def do_query(self, path, query, retrieve, offset, limit):
         # Must be defined for a subclass
         # returns a list of dicts representing each object
         raise NotImplementedError("Backend type '%s' does not implement do_query" % type(self.backend))
 
-    @_backend_delegable
+    @backend_delegable
     def do_commit(self, operations):
         # Must be defined for a subclass
         raise NotImplementedError("Backend type '%s' does not implement do_commit" % type(self.backend))
 
-    @_backend_delegable
+    @backend_delegable
     def field_to_pfield(self, f):
         return self.value_to_pvalue(f)
 
-    @_backend_delegable
+    @backend_delegable
+    def gob_to_pgob(self, gob):
+        pgob = {}
+        for f in gob.__dict__.itervalues():
+            if isinstance(f, field.Field):
+                pgob[f.name] = self.field_to_pfield(f)
+        return pgob
+
+    @backend_delegable
     def value_to_pvalue(self, value):
         if isinstance(value, field.Field):
             value = value.value
@@ -211,14 +221,15 @@ class Session(object):
         else:
             return value
 
-    @_backend_delegable
+    @backend_delegable
     def commit(self):
         operations = {}
         operations['additions'] = []
         for gob in self.operations['additions']:
             op = {
-                'path': self.path_to_ppath(gob.path())[0:-1],
-                'item': {}
+                'path': self.path_to_ppath(gob.path()),
+                'item': {},
+                'gob': gob
                 }
             for f in gob.__dict__.itervalues():
                 if isinstance(f, field.Field) and f.modifiable:
@@ -229,7 +240,8 @@ class Session(object):
         for gob in self.operations['updates']:
             op = {
                 'path': self.path_to_ppath(gob.path()),
-                'item': {}
+                'item': {},
+                'gob': gob
                 }
             for f in gob.__dict__.itervalues():
                 if isinstance(f, field.Field):
@@ -253,7 +265,12 @@ class Session(object):
                     op['conditions']['and'].append({'lte': [(f.name,), self.field_to_pfield(f)]})
             operations['removals'].append(op)
 
-        self.do_commit(operations)
+        for gob, gobdict in self.do_commit(operations).iteritems():
+            gob.mark_persisted()
+            self._update_object(gob, self._create_gob(gob.__class__, gobdict))
+            if gob.primary_key not in self.collections[gob.collection_name]:
+                self.collections[gob.collection_name][gob.primary_key] = gob
+
         for operation in self.operations.itervalues():
             for gob in operation:
                 gob.mark_persisted()
@@ -263,7 +280,7 @@ class Session(object):
             'updates': set()
             }
 
-    @_backend_delegable
+    @backend_delegable
     def rollback():
         """Roll back the transaction.
 
@@ -277,3 +294,19 @@ class Session(object):
             'removals': {},
             'updates': {}
             }
+
+    @backend_delegable
+    def upload(self, gob, fp):
+        gobdict = self.storage_engine.do_upload(self.gob_to_pgob(gob), fp)
+        self._update_object(gob, self._create_gob(gob.__class__, gobdict), True)
+
+    @backend_delegable
+    def upload_iter(self, gob, fp):
+        gobdict = self.storage_engine.do_upload_iter(self.gob_to_pgob(gob), fp)
+        self._update_object(gob, self._create_gob(gob.__class__, gobdict), True)
+
+    @backend_delegable
+    def download(self, gob):
+        gobdict, iterable = self.storage_engine.do_download(self.gob_to_pgob(gob))
+        self._update_object(gob, self._create_gob(gob.__class__, gobdict), True)
+        return iterable

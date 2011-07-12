@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 from . import gob
+from . import field
 
 class SchemaCollection(object):
     def __init__(self, session, path, sticky=None, autoset=None):
@@ -46,8 +47,12 @@ class SchemaCollection(object):
     def add(self, gob):
         gob.session = self.session
         if self.autoset is not None:
-            for key, value in self.autoset.iteritems:
-                setattr(gob, key, value)
+            for key, value in self.autoset.iteritems():
+                if isinstance(value, field.Field):
+                    setattr(gob, key, value.value)
+                else:
+                    setattr(gob, key, value)
+        gob._path = self.path
         gob.save()
 
     def update(self, gob=None, set=None, query=None, _query=None):

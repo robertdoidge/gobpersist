@@ -18,7 +18,7 @@ class Gob(object):
     def reload_class(cls):
         primary_key = None
         for key, value in cls.__dict__.iteritems():
-            if isinstance(value, field.Field):
+            if key != 'primary_key' and isinstance(value, field.Field):
                 value._key = field_key(key)
                 if value.name is None:
                     value.name = key
@@ -36,6 +36,7 @@ class Gob(object):
         self.persisted = _incoming_data
         self.session = session
         self.dirty = False
+        self._path = None
         for key in dir(self.__class__):
             value = getattr(self.__class__, key)
             if isinstance(value, field.Field):
@@ -50,12 +51,11 @@ class Gob(object):
             if f_key not in self.__dict__:
                 raise TypeError("__init__() got an unexpected keyword argument '%s'" % key)
             if(_incoming_data):
-                can_modify=self.__dict__[f_key].modifiable
-                self.__dict__[f_key].modifiable = True
-            self.__dict__[f_key].set(value)
-            if(_incoming_data):
-                self.__dict__[f_key].modifiable = can_modify
-                self.__dict__[f_key].reset_state()
+                # skip validation
+                self.__dict__[f_key].trip_set()
+                self.__dict__[f_key]._set(value)
+            else:
+                self.__dict__[f_key].set(value)
 
     def save(self):
         if self.persisted:
@@ -73,12 +73,16 @@ class Gob(object):
 
     def mark_persisted(self):
         self.persisted = True
+        self._path = None
         for value in self.__dict__.itervalues():
             if isinstance(value, field.Field):
                 value.mark_clean()
 
     def path(self):
-        return (self.__class__, self.primary_key)
+        if self._path is not None:
+            return self._path
+        else:
+            return (self.__class__, self.primary_key)
 
     def __repr__(self):
         return "%s(%s)" % (self.__class__.__name__, ', '.join(set(["%s=%s" % (value.name, repr(value)) for value in filter(lambda x: isinstance(x, field.Field), self.__dict__.values())])))

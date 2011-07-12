@@ -10,6 +10,7 @@ import iso8601
 
 class Field(object):
     """An abstract base class for defining a field type."""
+    instance = None
 
     def __init__(self, null=False, unique=False, primary_key=False, revision_tag=False, name=None, default=None, modifiable=True):
         self._key = None
@@ -33,7 +34,7 @@ class Field(object):
         assert not self.immutable, "If hash(field) is called, field is marked as immutable"
         self.dirty = True
         self.has_value = True
-        if self.instance is not None:
+        if self.instance:
             self.instance.dirty = True
 
     def reset_state(self):
@@ -64,7 +65,8 @@ class Field(object):
         instance.__dict__[self._key].set(None)
 
     def validate(self, value):
-        assert self.modifiable if self.instance.persisted else True, "Field is not modifiable"
+        if self.instance and self.instance.persisted:
+            assert self.modifiable, "Field is not modifiable"
         if value is None and not self.null:
             raise ValueError("'None' not allowed for field '%s'" % self.name)
 
@@ -72,6 +74,9 @@ class Field(object):
         ret = base_clone(self)
         ret.immutable = False
         return ret
+
+    def __getattr__(self, name):
+        return getattr(self.value, name)            
 
     def __repr__(self):
         return repr(self.value)
@@ -128,6 +133,7 @@ class ForeignCollection(object):
                     ret = schema.SchemaCollection(instance.session, (self.foreign_class,),
                                                   sticky={'eq': [(self.foreign_key,), local_key]},
                                                   autoset={self.foreign_key : local_key})
+                instance.__dict__[self._key] = ret
                 return ret
             else:
                 if self.name is not None:
@@ -138,7 +144,7 @@ class ForeignCollection(object):
                     instance.__dict__[self._key] = ret[0]
                     return ret[0]
                 else:
-                    return None
+                    ret = None
 
 class BooleanField(Field):
     """A field to represent a boolean value."""
@@ -163,6 +169,7 @@ class DateTimeField(Field):
                 raise ValueError("'%s' does not appear to be an ISO 8601 string" % value)
         elif not isinstance(value, datetime.datetime) and value is not None:
             raise TypeError("'%s' object is not datetime" % type(value))
+
 
 class StringField(Field):
     """A field to represent string data."""
@@ -249,88 +256,7 @@ class StringField(Field):
         return other * self.value
     def __imul__(self, other):
         self.set(self.value * other)
-    
 
-    def capitalize(self):
-        return self.value.capitalize
-    def center(self, *args, **kwargs):
-        return self.value.center(*args, **kwargs)
-    def count(self, *args, **kwargs):
-        return self.value.cound(*args, **kwargs)
-    def endswith(self, *args, **kwargs):
-        return self.value.endswith(*args, **kwargs)
-    def expandtabs(self, *args, **kwargs):
-        return self.value.expandtabs(*args, **kwargs)
-    def find(self, *args, **kwargs):
-        return self.value.find(*args, **kwargs)
-    def format(self, *args, **kwargs):
-        return self.value.format(*args, **kwargs)
-    def index(self, *args, **kwargs):
-        return self.value.index(*args, **kwargs)
-    def isalnum(self):
-        return self.value.isalnum()
-    def isalpha(self):
-        return self.value.isalpha()
-    def isdigit(self):
-        return self.value.isdigit()
-    def islower(self):
-        return self.value.islower()
-    def isspace(self):
-        return self.value.isspace()
-    def istitle(self):
-        return self.value.istitle()
-    def isupper(self):
-        return self.value.isupper()
-    def join(self, iterable):
-        return self.value.join(iterable)
-    def ljust(self, *args, **kwargs):
-        return self.value.ljust(*args, **kwargs)
-    def lower(self):
-        return self.value.lower()
-    def lstrip(self, *args, **kwargs):
-        return self.value.lstrip(*args, **kwargs)
-    def partition(self, sep):
-        return self.value.partition(sep)
-    def replace(self, *args, **kwargs):
-        return self.value.replace(*args, **kwargs)
-    def rfind(self, *args, **kwargs):
-        return self.value.rfind(*args, **kwargs)
-    def rindex(self, *args, **kwargs):
-        return self.value.rindex(*args, **kwargs)
-    def rjust(self, *args, **kwargs):
-        return self.value.rjust(*args, **kwargs)
-    def rpartition(self, sep):
-        return self.value.rpartition(sep)
-    def rsplit(self, *args, **kwargs):
-        return self.value.rsplit(*args, **kwargs)
-    def rstrip(self, *args, **kwargs):
-        return self.value.rstrip(*args, **kwargs)
-    def split(self, *args, **kwargs):
-        return self.value.split(*args, **kwargs)
-    def splitlines(self, *args, **kwargs):
-        return self.value.splitlines(*args, **kwargs)
-    def startswith(self, *args, **kwargs):
-        return self.value.startswith(*args, **kwargs)
-    def strip(self, *args, **kwargs):
-        return self.value.strip(*args, **kwargs)
-    def swapcase(self):
-        return self.value.swapcase()
-    def title(self):
-        return self.value.title()
-    def translate(self, *args, **kwargs):
-        return self.value.translate(*args, **kwargs)
-    def upper(self):
-        return self.value.upper()
-    def zfill(self, width):
-        return self.value.zfill(self, width)
-
-    # These intentionally fail in the case where value_decoded is None (binary data)
-    def isnumeric(self):
-        return self.value_decoded.isnumeric() if self.value_decoded is not None \
-            else self.value.isnumeric()
-    def isdecimal(self):
-        return self.value_decoded.isdecimal() if self.value_decoded is not None \
-            else self.value.isdecimal()
 
 class NumericField(Field):
     """Abstract superclass for RealField and IntegerField."""
@@ -481,8 +407,6 @@ class IntegerField(NumericField):
             value = long(value)
         super(IntegerField, self)._set(value)
 
-    def bit_length(self):
-        return self.value.bit_length()
 
 class RealField(NumericField):
     """Field representing all floating point types."""
@@ -497,13 +421,6 @@ class RealField(NumericField):
         super(RealField, self).validate(value)
         if not isinstance(value, float):
             raise TypeError("'%s' object is not float" % type(value))
-
-    def as_integer_ratio(self):
-        return self.value.as_integer_ratio()
-    def is_integer(self):
-        return self.value.is_integer()
-    def hex(self):
-        return self.value.hex()
 
 class EnumField(StringField):
     """A field to represent enumerations."""
@@ -588,10 +505,6 @@ class ListField(MultiField):
         return other * self.value
     def __reversed__(self):
         return reversed(self.value)
-    def count(self, elem):
-        return self.value.count(elem)
-    def index(self, *args, **kwargs):
-        return self.value.index(*args, **kwargs)
 
     def __setitem__(self, key, value):
         self.trip_set()
@@ -657,26 +570,12 @@ class SetField(MultiField):
         newvalue = set([self._element_to_field(element) for element in value])
         super(SetField, self)._set(instance, newvalue)
 
-    def isdisjoint(self, other):
-        return self.value.isdisjoint(other)
-    def issubset(self, other):
-        return self.value.issubset(other)
-    def issuperset(self, other):
-        return self.value.issuperset(other)
-    def union(self, *args):
-        return self.value.union(*args)
     def __or__(self, other):
         return self.value | other
-    def intersection(self, *args):
-        return self.value.intersection(*args)
     def __and__(self, other):
         return self.value & other
-    def difference(self, *args):
-        return self.value.difference(*args)
     def __sub__(self, other):
         return self.value - other
-    def symmetric_difference(other):
-        return self.value.symmetric_difference(other)
     def __xor__(self, other):
         return self.value ^ other
     def copy(self):
