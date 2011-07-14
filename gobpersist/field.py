@@ -76,7 +76,7 @@ class Field(object):
         return ret
 
     def __getattr__(self, name):
-        return getattr(self.value, name)            
+        return getattr(self.value, name)
 
     def __repr__(self):
         return repr(self.value)
@@ -190,20 +190,21 @@ class StringField(Field):
             return
         if self.encoding == 'binary':
             if isinstance(value, unicode):
-                self.value_encoded = value.encode('utf-8')
                 self.value_decoded = value
+                self.value_encoded = value.encode('utf-8')
             else:
-                self.value_decoded = None
                 self.value_encoded = value
-            super(StringField, self)._set(self.value_encoded)
+                self.value_decoded = None
+            super(StringField, self)._set(value)
         else:
             if isinstance(value, unicode):
-                self.value_encoded = value.encode(self.encoding)
                 self.value_decoded = value
+                print self.encoding
+                self.value_encoded = value.encode(self.encoding)
             else:
-                self.value_decoded = value.decode(self.encoding)
                 self.value_encoded = value
-            super(StringField, self)._set(self.value_decoded)
+                self.value_decoded = value.decode(self.encoding)
+            super(StringField, self)._set(value)
 
     def validate(self, value):
         super(StringField, self).validate(value)
@@ -222,11 +223,14 @@ class StringField(Field):
     def __repr__(self):
         return repr(self.value)
     def __str__(self):
-        return self.value if self.value is not None else str(None)
+        return str(self.value) # if self.value is not None else str(None)
     def __unicode__(self):
         return self.value_decoded if self.value_decoded is not None else unicode(self.value)
-    def decode(self, *args, **kwargs):
-        return self.value_decoded if self.value_decoded is not None else self.value.decode(*args, **kwargs)
+    def decode(self, encoding=None, *args, **kwargs):
+        if encoding == self.encoding and self.value_decoded:
+            return self.value_decoded
+        else:
+            return self.value.decode(encoding, *args, **kwargs)
     def encode(self, encoding=None, *args, **kwargs):
         if encoding == self.encoding:
             return self.value_encoded
