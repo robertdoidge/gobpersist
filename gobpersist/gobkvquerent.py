@@ -1,22 +1,31 @@
-class GobKVQuerent(object):
-    def __init__(self, backend=None):
-        self.backend = backend
-        # Allow caller to set session
-        self.session = None
+from __future__ import absolute_import
+from . import session
+from . import gob
 
-    def __getattr__(self, name):
-        return getattr(self.backend, name)
+class GobKVQuerent(session.Backend):
+    """Abstract superclass (or pluggable back-end) for classes that
+    aren't able to implement complex queries."""
+
+    __metaclass__ = session.VisibleDelegatorMeta
 
     def _get_value(gob, arg):
         """Turn an argument into a value."""
         if isinstance(arg, tuple):
+            # identifier
             value = gob
             for pathelem in arg:
-                if isinstance(value, schema.SchemaCollection):
-                    value = value.get(pathelem)
+                if not isinstance(value, gob.Gob):
+                    raise ValueError("Could not understand identifier %s" \
+                                         % repr(arg))
+                if not isinstance(pathelem, field.Field):
+                    pathelem = getattr(value, pathelem)
+                if isinstance(pathelem, field.Foreign):
+                    value = pathelem.value
                 else:
-                    value = getattr(value, pathelem)
-            if isinstance(value, schema.SchemaCollection):
+                    value = pathelem
+            if isinstance(value, gob.Gob):
+                raise ValueError("Could not understand identifier %s" % repr(arg))
+            elif isinstance(value, schema.SchemaCollection):
                 return value.list()
             else:
                 return value
@@ -40,6 +49,13 @@ class GobKVQuerent(object):
                     if not self._apply_operator(gob, op, arg1, arg2):
                         return False
                 return True
+            elif k == 'none':
+                for arg1 in v:
+                    if self._apply_operator(gob, op, arg1, arg2):
+                        return False
+                return True
+            else:
+                raise ValueError("Invalid key '%s' in quantifier" % k)
         elif isinstance(arg2, dict):
             if len(arg2) > 1:
                 raise ValueError("Too many keys in quantifier")
@@ -55,10 +71,19 @@ class GobKVQuerent(object):
                     if not self._apply_operator(gob, op, arg1, arg2):
                         return False
                 return True
+            elif k == 'none':
+                for arg2 in v:
+                    if self._apply_operator(gob, op, arg1, arg2):
+                        return False
+                return True
+            else:
+                raise ValueError("Invalid key '%s' in quantifier" % k)
         else:
             return op(arg1, arg2)
 
     def _execute_query(gob, query):
+        """Execute a query on an object, returning True if it matches
+        the query and False otherwise."""
         for cmd, args in query:
             if cmd in ('eq', 'ne', 'lt', 'gt', 'ge', 'le'):
                 if len(args) < 2:
@@ -83,8 +108,9 @@ class GobKVQuerent(object):
                         return False
         return True
 
-    def query(self, path, query, retrieve, offset, limit):
-        res = self.session._query(path, {}, retrieve)
+    @delegable('backend')
+    def query(self, path, query=None, retrieve=None, order=None, offset=None, limit=None):
+        res = self.caller._query(path, {}, retrieve)
         ret = []
         current = -1
         for item in res:
