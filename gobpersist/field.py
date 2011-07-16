@@ -203,6 +203,14 @@ class Foreign(Field):
         Many-to-many relationships would require keys in both classes.
         """
 
+        self.use_name = True if name is not None else False
+        """Whether or not this field has a name.
+
+        Used to determine whether a path can be constructed as
+        instance.path() + (field.name,) or whether a query must be
+        formed.
+        """
+
         super(Foreign, self).__init__(name=name, modifiable=False)
 
 
@@ -231,7 +239,7 @@ class Foreign(Field):
                     # obvious.
                     from . import schema
                     local_key = getattr(instance, self.local_key)
-                    if self.name is not None:
+                    if self.use_name:
                         ret = schema.SchemaCollection(
                             session=instance.session,
                             path=(instance.path() + (self,)),
@@ -246,7 +254,7 @@ class Foreign(Field):
                     self.has_value = True
                     return ret
                 else:
-                    if self.name is not None:
+                    if self.use_name:
                         ret = instance.session.query(
                             path=(instance.path() + (self,)))
                     else:

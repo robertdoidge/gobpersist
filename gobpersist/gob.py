@@ -48,12 +48,11 @@ class Gob(object):
                         raise ValueError("More than one primary key defined" \
                                              " for class '%s'" % cls.__name__)
                     primary_key = value
+                if value.name is None:
+                    value.name = key
                 if isinstance(value, field.Foreign):
                     if value.foreign_class == 'self':
                         value.foreign_class = cls
-                else:
-                    if value.name is None:
-                        value.name = key
         cls.primary_key = primary_key
         if 'collection_name' not in cls.__dict__:
             cls.collection_name = cls.__name__.lower() + 's'
