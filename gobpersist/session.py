@@ -65,6 +65,7 @@ class Session(object):
         if storage_engine is not None:
             self.storage_engine.caller = self
 
+
     @delegable('backend')
     def register_gob(self, gob):
         """Called to add a gob to this session's registry.
@@ -74,24 +75,28 @@ class Session(object):
             self.collections[gob.collection_name] = {}
         self.collections[gob.collection_name][gob.primary_key] = gob
 
+
     @delegable('backend')
     def add(self, gob):
         """Persist a new item."""
-        gob.prepare_persist()
+        gob.prepare_add()
         self._register_gob(gob)
         self.operations['additions'].add(gob)
+
 
     @delegable('backend')
     def update(self, gob):
         """Update an existing item."""
-        gob.prepare_persist()
+        gob.prepare_update()
         self.operations['updates'].add(gob)
+
 
     @delegable('backend')
     def remove(self, gob):
         """Remove an item."""
-        gob.prepare_persist()
+        gob.prepare_delete()
         self.operations['removals'].add(gob)
+
 
     @delegable('backend')
     def query_to_pquery(self, cls, query):
@@ -150,6 +155,7 @@ class Session(object):
                 raise QueryError("Invalid query operator '%s'" % key)
         return ret
 
+
     def _idnt_to_field(self, idnt, cls):
         """Returns the Field that corresponds to an identifier."""
         retfield = None
@@ -168,9 +174,10 @@ class Session(object):
                 cls == None
         return retfield
 
+
     @delegable('backend')
     def idnt_to_pidnt(self, idnt, cls):
-        """Turns a identifier into something more palatable to the backend."""
+        """Turns an identifier into something more palatable to the backend."""
         ret = []
         for pathelem in idnt:
             if cls is None:
@@ -188,8 +195,9 @@ class Session(object):
                 cls = None
         return tuple(ret)
 
+
     @delegable('backend')
-    def path_to_ppath(self, path):
+    def path_to_ppath(self, path, use_persisted_version=False):
         """Transforms a path into something more palatable to the
         backend."""
         if len(path) == 0:
@@ -202,7 +210,7 @@ class Session(object):
         f = cls.primary_key
         for pathelem in path[1:]:
             if f is None:
-                if isinstance(pathelem, field.Foreign):
+                if isinstance(pathelem, field.ForeignCollection):
                     f = pathelem
                 else:
                     f = getattr(cls, pathelem)
@@ -211,13 +219,14 @@ class Session(object):
                 f = getattr(cls, f.foreign_key)
             else:
                 if isinstance(pathelem, field.Field):
-                    ret.append(self.field_to_pfield(pathelem))
+                    ret.append(self.field_to_pfield(pathelem, use_persisted_version))
                 else:
                     newf = f.clone(clean_break=True)
                     newf.set(pathelem)
-                    ret.append(self.field_to_pfield(newf))
+                    ret.append(self.field_to_pfield(newf, False))
                 f = None
         return tuple(ret)
+
 
     def _path_to_cls(self, path):
         """Returns the class for a given path."""
@@ -231,6 +240,7 @@ class Session(object):
                 cls = getattr(cls, pathelem).foreign_class
         return cls
 
+
     @delegable('backend')
     def retrieve_to_pretrieve(self, cls, retrieve):
         """Transform retrieve request into something more palatable for the
@@ -241,6 +251,7 @@ class Session(object):
                 retrieval = getattr(cls, retrieval)
             ret.add(retrieval.name)
         return ret
+
 
     @delegable('backend')
     def order_to_porder(self, cls, order):
@@ -258,6 +269,7 @@ class Session(object):
             ret.add({ key : ordering.name })
         return ret
 
+
     @delegable('backend')
     def query(self, path, query=None, retrieve=None, order=None, offset=None, limit=None):
         """Perform a query against the database.
@@ -268,7 +280,7 @@ class Session(object):
         cls = self._path_to_cls(path)
         if retrieve is not None:
             # Should we be doing this?  Maybe the caller should get blank
-            # revision_tags if that's what they want.
+            # revision tags if that's what they want.
             retrieve.append(cls.primary_key)
             for k in dir(cls):
                 v = getattr(cls, k)
@@ -293,13 +305,15 @@ class Session(object):
                 ret.append(gob)
         return ret
 
-    def _create_gob(self, cls, dictionary):
+    @delegable('backend')
+    def create_gob(self, cls, dictionary):
         """Create a gob from a dictionary.
 
         TODO: This should retransform the keys it gets into their appropriate
         values based on the field.name attributes in the class.
         """
         return cls(self, _incoming_data=True, **dictionary)
+
     
     def _update_object(self, gob, updater, force=False):
         """Updates an object to have the values of another one.
@@ -313,6 +327,7 @@ class Session(object):
                     and (not value.dirty or force):
                 value.value = updater.__dict__[value._key].value
 
+
     @delegable('backend')
     def do_query(self, path, query, retrieve, offset, limit):
         """Actually perform the query.
@@ -322,6 +337,7 @@ class Session(object):
         """
         raise NotImplementedError("Backend type '%s' does not implement" \
                                       " do_query" % type(self.backend))
+
 
     @delegable('backend')
     def do_commit(self, operations):
@@ -335,13 +351,15 @@ class Session(object):
         raise NotImplementedError("Backend type '%s' does not implement" \
                                       " do_commit" % type(self.backend))
 
+
     @delegable('backend')
-    def field_to_pfield(self, f):
+    def field_to_pfield(self, f, use_persisted_version=False):
         """Transform a field into a value appropriate for the backend.
 
         Serialization should be done in here or in value_to_pvalue.
         """
-        return self.value_to_pvalue(f)
+        return self.value_to_pvalue(f, use_persisted_version)
+
 
     @delegable('backend')
     def gob_to_pgob(self, gob):
@@ -355,17 +373,19 @@ class Session(object):
                 pgob[f.name] = self.field_to_pfield(f)
         return pgob
 
+
     @delegable('backend')
-    def value_to_pvalue(self, value):
+    def value_to_pvalue(self, value, use_persisted_version=False):
         """Transform a value into a value appropriate for the backend.
 
         Serialization should be done in here or in value_to_pvalue.
         """
         if isinstance(value, field.Field):
-            value = value.value
+            value = value.value if not use_persisted_version else value.persisted_value
         if isinstance(value, (list, set)):
-            return [self.field_to_pfield(item) if isinstance(item, field.Field) \
-                        else self.value_to_pvalue(item) \
+            return [self.field_to_pfield(item, use_persisted_version) \
+                                if isinstance(item, field.Field) \
+                            else self.value_to_pvalue(item, use_persisted_version) \
                         for item in value]
         else:
             return value
@@ -382,6 +402,10 @@ class Session(object):
         for gob in self.operations['additions']:
             op = {
                 'path': self.path_to_ppath(gob.path()),
+                'keys': [self.path_to_ppath(path) \
+                             for path in gob.keys],
+                'unique_keys': [self.path_to_ppath(path) \
+                                    for path in gob.unique_keys],
                 'item': {},
                 'gob': gob
                 }
@@ -395,6 +419,10 @@ class Session(object):
         for gob in self.operations['updates']:
             op = {
                 'path': self.path_to_ppath(gob.path()),
+                'old_keys': [],
+                'new_keys': [],
+                'old_unique_keys': [],
+                'new_unique_keys': [],
                 'item': {},
                 'gob': gob
                 }
@@ -403,21 +431,41 @@ class Session(object):
                 if isinstance(f, field.Field):
                     if f.dirty:
                         op['item'][f.name] = self.field_to_pfield(f)
-                    if f.revision_tag:
+                    if f.revision_tag and f.has_persisted_value:
+                        f = f.clone(clean_break = True)
+                        f._set(f.persisted_value)
                         if 'conditions' not in op:
                             op['conditions'] = {'and': []}
                         op['conditions']['and'].append(
                             {'eq': [(f.name,), self.field_to_pfield(f)]})
+            for path in gob.keys:
+                old_path == self.path_to_ppath(path, True)
+                new_path == self.path_to_ppath(path, False)
+                if old_path != new_path:
+                    op['old_keys'].append(old_path)
+                    op['new_keys'].append(new_path)
+            for path in gob.unique_keys:
+                old_path == self.path_to_ppath(path, True)
+                new_path == self.path_to_ppath(path, False)
+                if old_path != new_path:
+                    op['old_unique_keys'].append(old_path)
+                    op['new_unique_keys'].append(new_path)
             operations['updates'].append(op)
 
         operations['removals'] = []
         for gob in self.operations['removals']:
             op = {
-                'path': self.path_to_ppath(gob.path())
+                'path': self.path_to_ppath(gob.path()),
+                'keys': [self.path_to_ppath(path, True) \
+                             for path in gob.keys],
+                'unique_keys': [self.path_to_ppath(path, True) \
+                                    for path in gob.unique_keys]
                 }
             for key in dir(gob):
                 f = getattr(gob, key)
-                if isinstance(f, field.Field) and f.revision_tag:
+                if isinstance(f, field.Field) and f.revision_tag and f.has_persisted_value:
+                    f = f.clone(clean_break = True)
+                    f._set(f.persisted_value)
                     if 'conditions' not in op:
                         op['conditions'] = {'and': []}
                     op['conditions']['and'].append(
@@ -439,20 +487,24 @@ class Session(object):
             'updates': set()
             }
 
+
     @delegable('backend')
-    def rollback():
+    def rollback(revert=False):
         """Roll back the transaction.
 
-        Note that although the reference to each object is cleared
-        from the internal cache, external references are not cleaned
-        up or reverted.
+        If revert is False (the default), then individual gobs are not
+        reverted, and only the list of pending operations is cleared.
         """
-        self.collections = {}
         self.operations = {
             'additions': {},
             'removals': {},
             'updates': {}
             }
+        if revert:
+            for collection in self.collections.itervalues():
+                for gob in self.object.itervalues():
+                    gob.revert()
+
 
     @delegable('storage_engine')
     def do_upload(pgob, fp):
@@ -468,6 +520,7 @@ class Session(object):
                                       " implement do_upload" \
                                       % type(self.storage_engine))
 
+
     @delegable('storage_engine')
     def do_download(pgob, fp):
         """Storage engines should provide this method.
@@ -478,6 +531,7 @@ class Session(object):
         raise NotImplementedError("Storage engine type '%s' does not" \
                                       " implement do_download" \
                                       % type(self.storage_engine))
+
 
     @delegable('storage_engine')
     def do_upload_iter(pgob, iterable):
@@ -511,6 +565,7 @@ class Session(object):
         gobdict = self.do_upload(self.gob_to_pgob(gob), fp)
         self._update_object(gob, self._create_gob(gob.__class__, gobdict), True)
 
+
     @delegable('storage_engine')
     def upload_iter(self, gob, iterable):
         """Upload the data to the gob, iterable version.
@@ -520,6 +575,7 @@ class Session(object):
         """
         gobdict = self.do_upload_iter(self.gob_to_pgob(gob), iterable)
         self._update_object(gob, self._create_gob(gob.__class__, gobdict), True)
+
 
     @delegable('storage_engine')
     def download(self, gob):
@@ -548,6 +604,7 @@ class Backend(object):
 
         if backend is not None:
             backend.caller = self
+
 
     def __getattr__(self, name):
         upstream = False
@@ -583,6 +640,7 @@ class StorageEngine(object):
 
         if storage_engine is not None:
             storage_engine.caller = self
+
 
     def __getattr__(self, name):
         upstream = False

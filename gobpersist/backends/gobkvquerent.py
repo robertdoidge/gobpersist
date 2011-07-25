@@ -1,6 +1,6 @@
 from __future__ import absolute_import
-from . import session
-from . import gob
+from .. import session
+from .. import gob
 
 class GobKVQuerent(session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
@@ -24,13 +24,15 @@ class GobKVQuerent(session.Backend):
                 else:
                     value = pathelem
             if isinstance(value, gob.Gob):
-                raise ValueError("Could not understand identifier %s" % repr(arg))
+                raise ValueError("Could not understand identifier %s" \
+                                     % repr(arg))
             elif isinstance(value, schema.SchemaCollection):
                 return value.list()
             else:
                 return value
         else: # literal
             return arg
+
 
     def _apply_operator(gob, op, arg1, arg2):
         """Apply operator to the two arguments, taking quantifiers into account."""
@@ -81,6 +83,7 @@ class GobKVQuerent(session.Backend):
         else:
             return op(arg1, arg2)
 
+
     def _execute_query(gob, query):
         """Execute a query on an object, returning True if it matches
         the query and False otherwise."""
@@ -107,6 +110,7 @@ class GobKVQuerent(session.Backend):
                     if self._execute_query(gob, subquery):
                         return False
         return True
+
 
     @delegable('backend')
     def query(self, path, query=None, retrieve=None, order=None, offset=None, limit=None):

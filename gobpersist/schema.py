@@ -54,6 +54,7 @@ class SchemaCollection(object):
         else:
             return {'eq': [(k,), v]}
 
+
     def _translate_and(self, query):
         """Translate an 'and' query into normal query format."""
         ret = {'and' : []}
@@ -69,6 +70,7 @@ class SchemaCollection(object):
             ret['and'].append(self.sticky)
         return ret
 
+
     def list(self, _query=None, **kwargs):
         """List items in the collection.
 
@@ -78,6 +80,7 @@ class SchemaCollection(object):
         if _query is None:
             _query = self._translate_query(kwargs)
         return self.session.query(self.path, _query)
+
 
     def get(self, primary_key):
         """Get an item with a specific primary key."""
@@ -89,6 +92,7 @@ class SchemaCollection(object):
             return res
         else:
             return None
+
 
     def add(self, gob):
         """Add an item to the collection."""
@@ -102,6 +106,7 @@ class SchemaCollection(object):
         gob._path = self.path
         gob.save()
 
+
     def update(self, gob):
         """Update item.
 
@@ -109,12 +114,14 @@ class SchemaCollection(object):
         """
         gob.save()
 
+
     def remove(self, gob):
         """Remove item.
 
         This is equivalent to calling gob.remove()
         """
         gob.remove()
+
 
 class Schema(object):
     """Convenience class to hold a schema.

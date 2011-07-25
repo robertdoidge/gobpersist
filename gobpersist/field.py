@@ -10,11 +10,11 @@ import iso8601
 
 class Field(object):
     """An abstract base class for defining a field type."""
-    instance = None
 
     def __init__(self, null=False, unique=False, primary_key=False,
-                 revision_tag=False, name=None, default=None, modifiable=True):
-        
+                 name=None, default=None, default_update=None, revision_tag=False,
+                 modifiable=True):
+
         self.null = null
         """Whether or not the field may be None."""
 
@@ -24,16 +24,25 @@ class Field(object):
         self.default = default
         """Callable or scalar indicating the default value for this field."""
 
-        self.primary_key = primary_key
-        """Indicates whether or not this field is the primary key for this
-        object."""
+        self.default_update = default_update
+        """Callable indicating a transformation to perform on
+        unaltered values for update.
+
+        The callable will be called like this:
+        value = default_update(value)
+        """
 
         self.revision_tag = revision_tag
-        """Indicates this field is a revision tag.
+        """Indicates whether this field should be considered a
+        revision tag or not.
 
         A revision tag must be unchanged between reading the object and
         updating/removing the object.
         """
+
+        self.primary_key = primary_key
+        """Indicates whether or not this field is the primary key for this
+        object."""
 
         self.modifiable = modifiable
         """Indicates whether or not this field can be modified for update."""
@@ -56,7 +65,7 @@ class Field(object):
         or a member of a set.
         """
 
-        self.key = None
+        self._name = None
         """The name of the variable that refers to this field."""
 
         self.value = None
@@ -65,24 +74,41 @@ class Field(object):
         self.has_value = False
         """Whether or not a value has been set.
 
-        This can be used to distinguish between explicit None and implicit None.
+        This can be used to distinguish between the absence of some
+        datum within gobpersist and the absence of some datum within
+        the data store.
         """
 
         self.instance = None
         """The Gob instance for this instance of Field.
 
-        None, if this represents an abstract field or a field on a class.
+        None, if this represents an abstract field or a field on a
+        class.
         """
 
-    def prepare_persist(self):
-        """Prepares this field to be persisted."""
-        if not self.instance.persisted and not self.has_value:
+        self.persisted_value = None
+        """The value of the field as it is stored in the database."""
+
+        self.has_persisted_value = False
+        """Whether or not a persisted value has been set."""
+
+
+    def prepare_add(self):
+        """Prepares this field to be added to the store."""
+        if not self.has_value:
             self.set(self.default() if callable(self.default) else self.default)
+
+
+    def prepare_update(self):
+        """Prepares this field to be updated in the store."""
+        if not self.dirty and self.default_update is not None:
+            self.set(self.default_update(self.value))
+
 
     def trip_set(self):
         """Indicates that this field is somehow being set."""
-        assert not self.immutable, "If %s.hash(field) is called, field is" \
-            " marked as immutable"
+        assert not self.immutable, "If %s.hash() is called, field is" \
+            " marked as immutable" % self._name
         self.dirty = True
         self.has_value = True
         if self.instance:
@@ -93,9 +119,20 @@ class Field(object):
         self.immutable = False
         self.dirty = False
 
-    def mark_clean(self):
-        """Marks this field as not being dirty."""
+    def mark_persisted(self):
+        """Marks this field as persisted in the database."""
         self.dirty = False
+        if self.has_value:
+            self.persisted_value = self.value
+            self.has_persisted_value = True
+
+    def revert(self):
+        """Reverts this field to the persisted version."""
+        assert not self.immutable, "If %s.hash() is called, field is" \
+            " marked as immutable" % self._name
+        self.dirty = False
+        self.value = self.persisted_value
+        self.has_value = self.has_persisted_value
 
     def set(self, value):
         """Set this field to a specific value."""
@@ -109,9 +146,9 @@ class Field(object):
         Subclasses will probably want to override this.
         """
         if self.instance is not None and self.instance.persisted:
-            assert self.modifiable, "Field '%s' is not modifiable" % self.key
+            assert self.modifiable, "Field '%s' is not modifiable" % self._name
         if value is None and not self.null:
-            raise ValueError("'None' not allowed for field '%s'" % self.key)
+            raise ValueError("'None' not allowed for field '%s'" % self._name)
 
     def _set(self, value):
         """Actually perform the set.
@@ -176,104 +213,7 @@ class Field(object):
         return hash(self.value)
     def __nonzero__(self):
         return bool(self.value)
-
-
-class Foreign(Field):
-    """A field to represent a foreign collection or object.
-
-    This is not very magic.  Once something has been queried, it is set.  The
-    object(s) themselves will continue to update, but which object(s) are
-    present will not change.
-    """
-
-    def __init__(self, foreign_class, local_key, foreign_key, name=None,
-                 many=True):
-        self.foreign_class = foreign_class
-        """The class for object(s) to which this foreign field points."""
-
-        self.foreign_key = foreign_key
-        """The key in the foreign class to which this field refers."""
-
-        self.local_key = local_key
-        """The key in the local class referring to the foreign object(s)."""
-
-        self.many = many
-        """Whether this field refers to a single object or to many objects.
-
-        Many-to-many relationships would require keys in both classes.
-        """
-
-        self.use_name = True if name is not None else False
-        """Whether or not this field has a name.
-
-        Used to determine whether a path can be constructed as
-        instance.path() + (field.name,) or whether a query must be
-        formed.
-        """
-
-        super(Foreign, self).__init__(name=name, modifiable=False)
-
-
-    # accessor methods
-
-    # These are both for the purposes of faking the obj.value variable
-    # as if it were always-already set to the SchemaCollection or
-    # Object.
-
-    def __setattribute__(self, name, value):
-        # ensure that self.value never actually exists.
-        if name == 'value':
-            self._value = value
-        else:
-            super(Foreign, self).__setattribute__(name, value)
-
-    def __getattr__(self, name):
-        if name == 'value':
-            if self.instance is None:
-                return None
-            elif self.has_value:
-                return self.__dict__['_value']
-            else:
-                if self.many:
-                    # The import dragons will keep you from doing something more
-                    # obvious.
-                    from . import schema
-                    local_key = getattr(instance, self.local_key)
-                    if self.use_name:
-                        ret = schema.SchemaCollection(
-                            session=instance.session,
-                            path=(instance.path() + (self,)),
-                            autoset={self.foreign_key : local_key})
-                    else:
-                        ret = schema.SchemaCollection(
-                            session=instance.session,
-                            path=self.foreign_class.coll_path,
-                            sticky={'eq': [(self.foreign_key,), local_key]},
-                            autoset={self.foreign_key : local_key})
-                    self.value = ret
-                    self.has_value = True
-                    return ret
-                else:
-                    if self.use_name:
-                        ret = instance.session.query(
-                            path=(instance.path() + (self,)))
-                    else:
-                        ret = instance.session.query(
-                            path=self.foreign_class.coll_path(),
-                            query={'eq': [(self.foreign_key,),
-                                          getattr(instance, self.local_key)]
-                                   })
-                    if ret:
-                        self.value = ret[0]
-                        self.has_value = True
-                        return ret[0]
-                    else:
-                        self.value = None
-                        self.has_value = True
-                        return None
-        else:
-            # name is not 'value'
-            return super(Foreign, self).__getattr__(name)
+        
 
 class BooleanField(Field):
     """A field to represent a boolean value."""
@@ -282,7 +222,7 @@ class BooleanField(Field):
         super(BooleanField, self).validate(value)
         if not isinstance(value, bool):
             raise TypeError("'%s' object is not a bool, but field '%s' requires"
-                            " a bool" % (type(value), self.key))
+                            " a bool" % (type(value), self._name))
 
 class DateTimeField(Field):
     """A field to represent a point in time."""
@@ -298,10 +238,22 @@ class DateTimeField(Field):
             if iso8601.ISO8601_RE.match(value) is None:
                 raise ValueError("'%s' does not appear to be an ISO 8601" \
                                      " string, as required by field '%s'" \
-                                     % (value, self.key))
+                                     % (value, self._name))
         elif not isinstance(value, datetime.datetime) and value is not None:
             raise TypeError("'%s' object is not datetime, unicode, or str, as" \
                                 " required by field '%s'" % type(value))
+
+
+class TimestampField(DateTimeField):
+    """A convenience wrapper for datetime that by default sets the
+    value to the latest time it was persisted."""
+    def __init__(self, *args, **kwargs):
+        if 'default' not in kwargs:
+            kwargs['default'] = lambda: datetime.datetime.utcnow()
+        if 'default_update' not in kwargs:
+            kwargs['default_update'] = lambda value: datetime.datetime.utcnow()
+
+        super(TimestampField, self).__init__(*args, **kwargs)
 
 
 class StringField(Field):
@@ -356,17 +308,17 @@ class StringField(Field):
         if not isinstance(value, (unicode, str)):
             raise TypeError("'%s' object is neither unicode nor bytes, as" \
                                 " required by field '%s'" \
-                                % (type(value), self.key))
+                                % (type(value), self._name))
         if self.max_length is not None \
                 and len(value) > self.max_length:
             raise ValueError("'%s' longer than maximum length permitted for" \
-                                 " field '%s'" % (value, self.key))
+                                 " field '%s'" % (value, self._name))
         if not self.allow_empty and value == "":
             raise ValueError("Empty string not permitted for field '%s'" \
-                                 % self.key)
+                                 % self._name)
         if not self.validate_extra(value):
             raise ValueError("'%s' failed validation for field '%s'" \
-                                 % (value, self.key))
+                                 % (value, self._name))
 
     # deal correctly with encodings
 
@@ -571,9 +523,9 @@ class IntegerField(NumericField):
         super(IntegerField, self).validate(value)
         if not isinstance(value, (int,long)):
             raise TypeError("'%s' object is not integral, as required by" \
-                                " field '%s'" % (type(value), self.key))
+                                " field '%s'" % (type(value), self._name))
         if value > self.maximum or value < self.minimum:
-            raise ValueError("'%s' out of range for field '%s'" % (value, self.key))
+            raise ValueError("'%s' out of range for field '%s'" % (value, self._name))
 
     def _set(self, value):
         if isinstance(value, int) \
@@ -581,6 +533,17 @@ class IntegerField(NumericField):
                      or (self.precision == 32 and self.unsigned)):
             value = long(value)
         super(IntegerField, self)._set(value)
+
+
+class IncrementingField(IntegerField):
+    """A convenience wrapper for IntegerField that by default
+    increments the value by one every time it is persisted."""
+    def __init__(self, *args, **kwargs):
+        if 'default' not in kwargs:
+            kwargs['default'] = 0
+        if 'default_update' not in kwargs:
+            kwargs['default_update'] = lambda value: value + 1
+        super(IncrementingRevisionTag, self).__init__(*args, **kwargs)
 
 
 class RealField(NumericField):
@@ -597,7 +560,7 @@ class RealField(NumericField):
         super(RealField, self).validate(value)
         if not isinstance(value, float):
             raise TypeError("'%s' object is not float, as required by field" \
-                                " '%s'" % (type(value), self.key))
+                                " '%s'" % (type(value), self._name))
 
 
 class EnumField(StringField):
@@ -612,7 +575,7 @@ class EnumField(StringField):
         super(EnumField, self).validate(value)
         if value not in self.choices:
             raise ValueError("'%s' not in choices for field '%s': %s" \
-                                 % (value, self.key, self.choices.join(", ")))
+                                 % (value, self._name, self.choices.join(", ")))
 
 
 class UUIDField(StringField):
@@ -633,7 +596,7 @@ class UUIDField(StringField):
             return
         if not self.validate_re.match(value):
             raise ValueError("'%s' is not a valid UUID, as required by field" \
-                                 " '%s'" % (str(value), self.key))
+                                 " '%s'" % (str(value), self._name))
 
 class MultiField(Field):
     """An abstract field representing multiple uniformly-typed values."""
@@ -659,10 +622,14 @@ class MultiField(Field):
         for element in self.value:
             element.mark_clean()
         super(MultiField, self).mark_clean()
-    def prepare_persist(self):
-        super(MultiField, self).prepare_persist()
+    def prepare_update(self):
+        super(MultiField, self).prepare_update()
         for element in self.value:
-            element.prepare_persist()
+            element.prepare_update()
+    def prepare_add(self):
+        super(MultiField, self).prepare_add()
+        for element in self.value:
+            element.prepare_add()
 
     # Provide sequence magic
 
@@ -855,3 +822,162 @@ class SetField(MultiField):
     def __hash__(self):
         self.value = frozenset(self.value)
         return super(ListField, self).__hash__(self)
+
+
+class Foreign(Field):
+    """An abstract field to represent a foreign collection or object.
+
+    This is not very magic.  Once something has been queried, it is
+    set.  The object(s) themselves will continue to update, but which
+    object(s) are present will not change.  If you want to explicitly
+    reload the field, use field.forget() to forget the cached value.
+    """
+
+    def __init__(self, foreign_class, local_key, foreign_key, name=None,
+                 many=True, virtual=False):
+        self.foreign_class = foreign_class
+        """The class for object(s) to which this foreign field points."""
+
+        self.foreign_key = foreign_key
+        """The key in the foreign class to which this field refers."""
+
+        self.local_key = local_key
+        """The key in the local class referring to the foreign object(s)."""
+
+        self.virtual = False
+        """Whether or not this field has a corresponding path.
+
+        Virtual fields are queried by adding additional constraints to
+        a general query for the foreign objects, rather than on a
+        keyed path.  For some backends there will be no difference.
+        """
+
+        super(Foreign, self).__init__(name=name, modifiable=False)
+
+
+    def mark_persisted(self):
+        pass
+
+    def revert(self):
+        """For a foreign field, revert() will drop the cached value."""
+        self.forget()
+
+    def forget(self):
+        """Forget the cached value."""
+        self.has_value = False
+        self._value = None
+
+    # accessor methods
+
+    # Both of these are for the purposes of faking the obj.value variable
+    # as if it were always-already set to the SchemaCollection or
+    # Object.
+
+    def __setattribute__(self, name, value):
+        # ensure that self.value never actually exists.
+        if name == 'value':
+            self._value = value
+        else:
+            super(Foreign, self).__setattribute__(name, value)
+
+    def fetch_value(self):
+        """Fetches the appropriate foreign value on demand."""
+        pass
+
+    def __getattr__(self, name):
+        if name == 'value':
+            if self.instance is None:
+                return None
+            elif self.has_value:
+                return self._value
+            else:
+                self._value = self.fetch_value()
+                self.has_value = True
+                return self._value
+        else:
+            return super(Foreign, self).__getattr__(name)
+
+    # Functions for delegation
+
+    def __repr__(self):
+        return self.__class__.__name__ + '(' + self._name + ')'
+    def __str__(self):
+        return self._name
+    def __lt__(self, other):
+        return self.__class__ < other.__class__ if self.__class__ is not other.__class__ \
+            else self.foreign_class < other.foreign_class if self.foreign_class is not other.foreign_class \
+            else self.name < other.name
+    def __le__(self, other):
+        return self.__class__ <= other.__class__ if self.__class__ is not other.__class__ \
+            else self.foreign_class <= other.foreign_class if self.foreign_class is not other.foreign_class \
+            else self.name <= other.name
+    def __eq__(self, other):
+        return False if self.__class__ is not other.__class__ \
+            else False if self.foreign_class is not other.foreign_class \
+            else self.name == other.name
+    def __ne__(self, other):
+        return True if self.__class__ is not other.__class__ \
+            else True if self.foreign_class is not other.foreign_class \
+            else self.name != other.name
+    def __gt__(self, other):
+        return self.__class__ > other.__class__ \
+                if self.__class__ is not other.__class__ \
+            else self.foreign_class > other.foreign_class \
+                if self.foreign_class is not other.foreign_class \
+            else self.name > other.name
+    def __ge__(self, other):
+        return self.__class__ >= other.__class__ \
+                if self.__class__ is not other.__class__ \
+            else self.foreign_class >= other.foreign_class \
+                if self.foreign_class is not other.foreign_class \
+            else self.name >= other.name
+    def __cmp__(self, other):
+        return cmp(self.__class__, other.__class__) \
+                if self.__class__ is not other.__class__ \
+            else cmp(self.foreign_class, other.foreign_class) \
+                if self.foreign_class is not other.foreign_class \
+            else cmp(self.name, other.name)
+    def __hash__(self):
+        return hash(hash(self.__class__) + hash(self.foreign_class) + hash(self.name))
+    def __nonzero__(self):
+        return False if self.has_value and self._value is None else True
+
+
+class ForeignObject(Foreign):
+    """A field to represent a foreign object."""
+
+    def fetch_value(self):
+        if self.virtual:
+            ret = instance.session.query(
+                path=self.foreign_class.coll_path,
+                query={'eq': [(self.foreign_key,),
+                              getattr(instance, self.local_key)]
+                       })
+        else:
+            ret = instance.session.query(
+                path=(instance.path() + (self,)))
+        if ret:
+            return ret[0]
+        else:
+            return None
+
+
+class ForeignCollection(Foreign):
+    """A field representing a foreign collection."""
+
+    def fetch_value(self):
+        # The import dragons will keep you from doing something more
+        # obvious.
+        from . import schema
+        local_key = getattr(self.instance, self.local_key)
+        if self.virtual:
+            return schema.SchemaCollection(
+                session=instance.session,
+                path=self.foreign_class.coll_path,
+                sticky={'eq': [(self.foreign_key,), local_key]},
+                autoset={self.foreign_key : local_key})
+        else:
+            return schema.SchemaCollection(
+                session=instance.session,
+                path=(instance.path() + (self,)),
+                autoset={self.foreign_key : local_key})
