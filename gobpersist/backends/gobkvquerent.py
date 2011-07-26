@@ -8,7 +8,7 @@ class GobKVQuerent(session.Backend):
 
     __metaclass__ = session.VisibleDelegatorMeta
 
-    def _get_value(gob, arg):
+    def _get_value(self, gob, arg):
         """Turn an argument into a value."""
         if isinstance(arg, tuple):
             # identifier
@@ -34,7 +34,7 @@ class GobKVQuerent(session.Backend):
             return arg
 
 
-    def _apply_operator(gob, op, arg1, arg2):
+    def _apply_operator(self, gob, op, arg1, arg2):
         """Apply operator to the two arguments, taking quantifiers into account."""
         if isinstance(arg1, dict):
             if len(arg1) > 1:
@@ -84,10 +84,10 @@ class GobKVQuerent(session.Backend):
             return op(arg1, arg2)
 
 
-    def _execute_query(gob, query):
+    def _execute_query(self, gob, query):
         """Execute a query on an object, returning True if it matches
         the query and False otherwise."""
-        for cmd, args in query:
+        for cmd, args in query.iteritems():
             if cmd in ('eq', 'ne', 'lt', 'gt', 'ge', 'le'):
                 if len(args) < 2:
                     continue
@@ -112,7 +112,7 @@ class GobKVQuerent(session.Backend):
         return True
 
 
-    @delegable('backend')
+    @session.delegable('backend')
     def query(self, path, query=None, retrieve=None, order=None, offset=None, limit=None):
         res = self.caller._query(path, {}, retrieve)
         ret = []

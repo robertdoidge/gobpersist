@@ -1,56 +1,63 @@
 from __future__ import absolute_import
 from . import gobkvquerent
+from .. import exception
 
 import pylibmc
 import time
-import cpickle
+import cPickle as pickle
+import datetime
 
 class PickleWrapper(object):
-    loads = cpickle.loads
+    loads = pickle.loads
 
     @staticmethod
     def dumps(obj):
-        return cpickle.dumps(obj, cpickle.HIGHEST_PROTOCOL)
+        return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
 
-class MemcachedBackend(GobKVQuerent):
+class MemcachedBackend(gobkvquerent.GobKVQuerent):
     """Gob back end which uses memcached for storage"""
 
-    def __init__(servers=['127.0.0.1'], binary=True, serializer=PickleWrapper,
-                 lock_prefix='_lock', *args, **kwargs):
+    def __init__(self, servers=['127.0.0.1'], binary=True,
+                 serializer=PickleWrapper, lock_prefix='_lock',
+                 *args, **kwargs):
 
-        self.mc = pylibmc.Client(servers, binary)
+        behaviors = {'ketama': True, 'cas': True}
+
+        for key, value in kwargs.iteritems():
+            behaviors[key] = value
+
+        self.mc = pylibmc.Client(servers, behaviors = behaviors, binary=binary)
         """The memcached client for this back end."""
 
         self.serializer = serializer
         """The serializer for this back end."""
 
-        self.mc.behaviors['ketama'] = True
-        self.mc.behaviors['cas'] = True
-        for key, value in kwargs.iteritems:
-            self.mc.behaviors[key] = value
+        self.lock_prefix = lock_prefix
+        """A string to prepend to a key value to represent the lock
+        for that key."""
 
         super(MemcachedBackend, self).__init__()
 
 
     def do_query(self, path, query=None, retrieve=None, offset=None, limit=None):
         # ignore everything but path
-        res = self.mc.get("\0".join(path))
+        res = self.mc.get(".".join(path))
         if res == None:
             raise exception.NotFound(
                 "Could not find value for key %s" \
-                    % "\0".join(path))
+                    % ".".join(path))
         store = self.serializer.loads(res)
-        if isinstance(store, list):
+        if isinstance(store, (list, tuple)):
             # Collection or reference?
             if len(store) == 0:
                 # Empty collection
                 return store
-            elif isinstance(store[0], list):
+            elif isinstance(store[0], (list, tuple)):
                 # Collection
                 ret = []
                 for path in store:
-                    ret.append(self.do_query(path))
+                    ret.append(self.do_query(path)[0])
                     return ret
             else:
                 # Reference
@@ -77,13 +84,21 @@ class MemcachedBackend(GobKVQuerent):
             for lock in locks:
                 while True:
                     (status, cas) = self.mc.gets(lock)
-                    if status is None or status == "\0":
+                    print "status=%s cas=%s" % (repr(status), repr(cas))
+                    if status == "\0":
                         # Lock the object
                         if self.mc.cas(lock, "\1", cas):
-                            locks_acquired.append(path)
+                            locks_acquired.append(lock)
                             break
                         else:
                             continue
+                    elif status is None:
+                        # Lock the object
+                        if self.mc.add(lock, "\1"):
+                            locks_acquired.append(lock)
+                            break
+                        else:
+                            continue                        
                     else:
                         # The object is locked!
                         # Back out all acquired locks and start over
@@ -101,7 +116,7 @@ class MemcachedBackend(GobKVQuerent):
                 return locks_acquired
             else:
                 # We failed to acquire all the locks; loop and try again
-                tries--
+                tries -= 1
                 time.sleep(sleep_time)
                 continue
         # We failed to acquire locks after *tries* attempts.  Say a
@@ -110,7 +125,7 @@ class MemcachedBackend(GobKVQuerent):
             # Hail Mary!
             # Lock the object
             self.mc.set(lock, "\1")
-            locks_acquired.append(path)
+            locks_acquired.append(lock)
 
 
     def release_locks(self, locks):
@@ -118,6 +133,14 @@ class MemcachedBackend(GobKVQuerent):
         for lock in locks:
             self.mc.set(lock, "\0")
 
+    def value_to_pvalue(self, value, use_persisted_version=False):
+        value = self.caller._value_to_pvalue(value, use_persisted_version)
+        if isinstance(value, datetime.datetime):
+            return value.isoformat()
+        elif value is None:
+            return '_NULL'
+        else:
+            return value
 
     def do_commit(self, operations):
         # Build the set of commits
@@ -129,41 +152,43 @@ class MemcachedBackend(GobKVQuerent):
         locks = []
         conditions = []
 
+        print repr(operations)
+
         for addition in operations['additions']:
             to_add.append((addition['path'], addition['item'],))
-            locks.append(self.lock_prefix + '\0' + '\0'.join(addition['path']))
+            locks.append(self.lock_prefix + '.' + '.'.join(addition['path']))
             for path in addition['unique_keys']:
                 to_add.append((path, addition['path'],))
-                locks.append(self.lock_prefix + '\0' + '\0'.join(addition['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
             for path in addition['keys']:
                 collection_add.append((path, addition['path'],))
-                locks.append(self.lock_prefix + '\0' + '\0'.join(addition['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
 
         for update in operations['updates']:
             to_set.append((update['path'], update['item'],))
-            locks.append(self.lock_prefix + '\0' + '\0'.join(update['path']))
+            locks.append(self.lock_prefix + '.' + '.'.join(update['path']))
             for path in update['old_unique_keys']:
                 to_delete.append(path)
-                locks.append(self.lock_prefix + '\0' + '\0'.join(update['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
             for path in update['old_keys']:
                 collection_remove.append((path, update['path'],))
-                locks.append(self.lock_prefix + '\0' + '\0'.join(update['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
             for path in update['new_unique_keys']:
                 to_add.append((path, update['path'],))
-                locks.append(self.lock_prefix + '\0' + '\0'.join(update['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
             for path in update['new_keys']:
                 collection_add.append((path, update['path'],))
-                locks.append(self.lock_prefix + '\0' + '\0'.join(update['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
 
         for removal in operations['removals']:
             to_delete.append(removal['path'])
-            locks.append(self.lock_prefix + '\0' + '\0'.join(removal['path']))
+            locks.append(self.lock_prefix + '.' + '.'.join(removal['path']))
             for path in removal['unique_keys']:
                 to_delete.append(path)
-                locks.append(self.lock_prefix + '\0' + '\0'.join(removal['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
             for path in removal['keys']:
                 collection_remove.append((path, removal['path'],))
-                locks.append(self.lock_prefix + '\0' + '\0'.join(removal['path']))
+                locks.append(self.lock_prefix + '.' + '.'.join(path))
 
         # Acquire locks
         self.acquire_locks(locks)
@@ -201,26 +226,31 @@ class MemcachedBackend(GobKVQuerent):
                         continue
 
             # Conditions pass! Actually perform the actions
+            print "to_set:", to_set, "to_add:", to_add, "to_delete:", to_delete, "collection_add:", collection_add, "collection_remove:", collection_remove, "locks:", locks, "conditions:", conditions
+
+
             for add in to_add:
-                self.mc.add('\0'.join(add[0]), self.serializer.dumps(add[1]))
+                self.mc.add('.'.join(add[0]), self.serializer.dumps(add[1]))
             for c_add in collection_add:
-                res = self.mc.get('\0'.join(c_add[0]))
+                res = self.mc.get('.'.join(c_add[0]))
                 if res is None:
-                    self.mc.set('\0'.join(c_add[0]), serializer.dumps([c_add[1]]))
+                    self.mc.set('.'.join(c_add[0]), self.serializer.dumps([c_add[1]]))
                 else:
-                    res = set(serializer.loads(res))
+                    res = set(self.serializer.loads(res))
                     res.add(c_add[1])
-                    self.mc.set('\0'.join(c_add[0]), serializer.dumps(res))
-            for set in to_set:
-                self.mc.set('\0'.join(set[0]), self.serializer.dumps(set[1]))
+                    self.mc.set('.'.join(c_add[0]), self.serializer.dumps(list(res)))
+            for setting in to_set:
+                self.mc.set('.'.join(setting[0]), self.serializer.dumps(setting[1]))
             for delete in to_delete:
-                self.mc.delete('\0'.join(delete))
+                self.mc.delete('.'.join(delete))
             for c_rm in collection_remove:
-                res = self.mc.get('\0'.join(c_rm[0]))
+                res = self.mc.get('.'.join(c_rm[0]))
                 if res is not None:
-                    res = set(serializer.loads(res))
-                    res.discard(c_[1])
-                    self.mc.set('\0'.join(c_rm[0]), serializer.dumps(res))
+                    res = set(self.serializer.loads(res))
+                    res.discard(c_rm[1])
+                    self.mc.set('.'.join(c_rm[0]), self.serializer.dumps(list(res)))
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)
+        # memcached never changes items on update
+        return {}

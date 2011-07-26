@@ -53,6 +53,23 @@ class Gob(object):
     implementation.
     """
 
+    def store_in_root(self):
+        """This function is called to determine whether this
+        particular object should be stored in the "root collection",
+        i.e. the collection identified by the collection path without
+        any additional qualifiers.
+
+        By default, this method simply returns "False" and the
+        collection is disabled.
+        """
+        return False
+
+    def store_in_root_changed(self):
+        """This function determines whether store_in_root has changed
+        since the object was persisted.
+        """
+        return False
+
     @classmethod
     def reload_class(cls):
         """Reload the class as if it was recreated from the metaclass.
@@ -79,7 +96,7 @@ class Gob(object):
 
         # scan for 'self' in keys and unique_keys
         new_keys = []
-        for path in self.keys:
+        for path in cls.keys:
             new_path = []
             for pathelem in path:
                 if pathelem == 'self':
@@ -87,9 +104,9 @@ class Gob(object):
                 else:
                     new_path.append(pathelem)
             new_keys.append(tuple(new_path))
-        self.keys = new_keys
+        cls.keys = new_keys
         new_unique_keys = []
-        for path in self.unique_keys:
+        for path in cls.unique_keys:
             new_path = []
             for pathelem in path:
                 if pathelem == 'self':
@@ -97,7 +114,7 @@ class Gob(object):
                 else:
                     new_path.append(pathelem)
             new_unique_keys.append(tuple(new_path))
-        self.keys = new_unique_keys
+        cls.unique_keys = new_unique_keys
 
         cls.primary_key = primary_key
 
@@ -134,7 +151,7 @@ class Gob(object):
             new_path = []
             for pathelem in path:
                 if isinstance(pathelem, field.Field) \
-                        and pathelem in self.__class__.__dict__:
+                        and pathelem.instance is None:
                     pathelem = self.__dict__[pathelem._key]
                 new_path.append(pathelem)
             new_keys.append(tuple(new_path))
@@ -145,7 +162,7 @@ class Gob(object):
             new_path = []
             for pathelem in path:
                 if isinstance(pathelem, field.Field) \
-                        and pathelem in self.__class__.__dict__:
+                        and pathelem.instance is None:
                     pathelem = self.__dict__[pathelem._key]
                 new_path.append(pathelem)
             new_unique_keys.append(tuple(new_path))
@@ -159,7 +176,7 @@ class Gob(object):
                                     " argument '%s'" % key)
             if _incoming_data:
                 # skip validation...
-                self.__dict__[f_key].trip_set(value)
+                self.__dict__[f_key].trip_set()
                 self.__dict__[f_key]._set(value)
             else:
                 self.__dict__[f_key].set(value)
@@ -211,6 +228,15 @@ class Gob(object):
                 value.prepare_update()
 
 
+    def prepare_delete(self):
+        """Prepares this object to be deleted from the store.
+
+        Don't call this method directly unless you know what you're
+        doing.
+        """
+        pass
+
+
     def revert(self):
         """Reverts the object to the persisted version.
 
@@ -247,12 +273,26 @@ class Gob(object):
 
 
     def __repr__(self):
+        # Because Python should be lisp?  I dunno...
         return "%s(%s)" % (
             self.__class__.__name__,
             ', '.join(
-                set([
-                        "%s=%s" % (value.key, repr(value))
-                        for value in filter(
+                set(["%s=%s" % (value._name, repr(value)) \
+                         for value in filter(
                             lambda x: isinstance(x, field.Field) \
                                 and not isinstance(x, field.Foreign),
-                            self.__dict__.values())])))
+                            self.__dict__.values())] \
+                    + ["keys=[%s]" \
+                       % ', '.join(["(%s)" % ', '.join([pathelem.coll_name if isinstance(pathelem, Gob) \
+                                                            else "%s=%s" % (pathelem._name, repr(pathelem.value)) \
+                                                                if isinstance(pathelem, field.Field)
+                                                        else repr(pathelem)
+                                                        for pathelem in path]) \
+                                        for path in self.keys]),
+                       "unique_keys=[%s]" \
+                       % ', '.join(["(%s)" % ', '.join([pathelem.coll_name if isinstance(pathelem, Gob) \
+                                                            else "%s=%s" % (pathelem._name, repr(pathelem.value)) \
+                                                                if isinstance(pathelem, field.Field) \
+                                                            else repr(pathelem) \
+                                                            for pathelem in path]) \
+                                        for path in self.unique_keys])])))

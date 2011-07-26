@@ -206,24 +206,36 @@ class Session(object):
             return path
         ret = []
         cls = path[0]
-        ret.append(cls.collection_name)
-        f = cls.primary_key
+        if isinstance(cls, type):
+            ret.append(cls.collection_name)
+            f = cls.primary_key
+        else:
+            ret.append(cls)
+            cls = None
+            f = None
+        coll = False # whether this loop is for collections or identifiers
         for pathelem in path[1:]:
-            if f is None:
-                if isinstance(pathelem, field.ForeignCollection):
-                    f = pathelem
-                else:
+            if coll:
+                if cls is not None and isinstance(pathelem, (str, unicode)):
                     f = getattr(cls, pathelem)
-                cls = f.foreign_class
-                ret.append(f.name)
-                f = getattr(cls, f.foreign_key)
+                elif isinstance(pathelem, field.Foreign):
+                    f = pathelem
+                    cls = f.foreign_class
+                    ret.append(f.name)
+                    f = getattr(cls, f.foreign_key)
+                elif isinstance(pathelem, field.Field):
+                    ret.append(self.field_to_pfield(pathelem, use_persisted_version))
+                else:
+                    ret.append(self.value_to_pvalue(pathelem, use_persisted_version))
             else:
                 if isinstance(pathelem, field.Field):
                     ret.append(self.field_to_pfield(pathelem, use_persisted_version))
-                else:
+                elif f:
                     newf = f.clone(clean_break=True)
                     newf.set(pathelem)
                     ret.append(self.field_to_pfield(newf, False))
+                else:
+                    ret.append(self.value_to_pvalue(pathelem))
                 f = None
         return tuple(ret)
 
@@ -292,6 +304,7 @@ class Session(object):
             query = self.query_to_pquery(cls, query)
         if cls.collection_name not in self.collections:
             self.collections[cls.collection_name] = {}
+        print repr(self.do_query(path, query, retrieve, offset, limit))
         results = [self._create_gob(cls, result) \
                        for result in self.do_query(path, query, retrieve, offset, limit)]
         ret = []
@@ -411,8 +424,10 @@ class Session(object):
                 }
             for key in dir(gob):
                 f = getattr(gob, key)
-                if isinstance(f, field.Field):
+                if isinstance(f, field.Field) and not isinstance(f, field.Foreign):
                     op['item'][f.name] = self.field_to_pfield(f)
+            if gob.store_in_root():
+                op['keys'].append(self.path_to_ppath(gob.coll_path))
             operations['additions'].append(op)
 
         operations['updates'] = []
@@ -439,17 +454,22 @@ class Session(object):
                         op['conditions']['and'].append(
                             {'eq': [(f.name,), self.field_to_pfield(f)]})
             for path in gob.keys:
-                old_path == self.path_to_ppath(path, True)
-                new_path == self.path_to_ppath(path, False)
+                old_path = self.path_to_ppath(path, True)
+                new_path = self.path_to_ppath(path, False)
                 if old_path != new_path:
                     op['old_keys'].append(old_path)
                     op['new_keys'].append(new_path)
             for path in gob.unique_keys:
-                old_path == self.path_to_ppath(path, True)
-                new_path == self.path_to_ppath(path, False)
+                old_path = self.path_to_ppath(path, True)
+                new_path = self.path_to_ppath(path, False)
                 if old_path != new_path:
                     op['old_unique_keys'].append(old_path)
                     op['new_unique_keys'].append(new_path)
+            if gob.store_in_root_changed():
+                if gob.store_in_root():
+                    op['new_keys'].append(self.path_to_ppath(gob.coll_path))
+                else:
+                    op['old_keys'].append(self.path_to_ppath(gob.coll_path))
             operations['updates'].append(op)
 
         operations['removals'] = []
@@ -464,12 +484,14 @@ class Session(object):
             for key in dir(gob):
                 f = getattr(gob, key)
                 if isinstance(f, field.Field) and f.revision_tag and f.has_persisted_value:
-                    f = f.clone(clean_break = True)
+                    f = f.clone(clean_break=True)
                     f._set(f.persisted_value)
                     if 'conditions' not in op:
                         op['conditions'] = {'and': []}
                     op['conditions']['and'].append(
                         {'eq': [(f.name,), self.field_to_pfield(f)]})
+            if gob.store_in_root() and not gob.store_in_root_changed():
+                op['keys'].append(self.path_to_ppath(gob.coll_path))
             operations['removals'].append(op)
 
         for gob, gobdict in self.do_commit(operations).iteritems():

@@ -543,7 +543,7 @@ class IncrementingField(IntegerField):
             kwargs['default'] = 0
         if 'default_update' not in kwargs:
             kwargs['default_update'] = lambda value: value + 1
-        super(IncrementingRevisionTag, self).__init__(*args, **kwargs)
+        super(IncrementingField, self).__init__(*args, **kwargs)
 
 
 class RealField(NumericField):
@@ -834,7 +834,7 @@ class Foreign(Field):
     """
 
     def __init__(self, foreign_class, local_key, foreign_key, name=None,
-                 many=True, virtual=False):
+                 virtual=False):
         self.foreign_class = foreign_class
         """The class for object(s) to which this foreign field points."""
 
@@ -866,6 +866,12 @@ class Foreign(Field):
         """Forget the cached value."""
         self.has_value = False
         self._value = None
+
+    def prepare_add(self):
+        pass
+
+    def prepare_update(self):
+        pass
 
     # accessor methods
 
