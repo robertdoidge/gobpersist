@@ -200,7 +200,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                         # DON'T replace this with a simple .query()
                         # call, as that will interact with
                         # deduplication in weird ways.
-                        gob = self.caller.create_gob(self.do_query(update['path'])[0])
+                        gob = self.caller._create_gob(self.do_query(update['path'])[0])
                         if not self._execute_query(gob, update['conditions']):
                             raise ConditionFailed(
                                 "The conditions '%s' could not be met for" \
@@ -215,7 +215,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                         # DON'T replace this with a simple .query()
                         # call, as that will interact with
                         # deduplication in weird ways.
-                        gob = self.caller.create_gob(self.do_query(removal['path'])[0])
+                        gob = self.caller._create_gob(self.do_query(removal['path'])[0])
                         if not self._execute_query(gob, removal['conditions']):
                             raise ConditionFailed(
                                 "The conditions '%s' could not be met for" \

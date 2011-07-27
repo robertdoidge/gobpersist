@@ -1,5 +1,6 @@
 from __future__ import absolute_import
 from . import field
+from . import gob
 
 import types
 
@@ -235,7 +236,7 @@ class Session(object):
             else:
                 if isinstance(pathelem, field.Field):
                     ret.append(self.field_to_pfield(pathelem, use_persisted_version))
-                elif f:
+                elif f is not None:
                     newf = f.clone(clean_break=True)
                     newf.set(pathelem)
                     ret.append(self.field_to_pfield(newf, False))
@@ -309,7 +310,6 @@ class Session(object):
             query = self.query_to_pquery(cls, query)
         if cls.collection_name not in self.collections:
             self.collections[cls.collection_name] = {}
-        print repr(self.do_query(path, query, retrieve, offset, limit))
         results = [self._create_gob(cls, result) \
                        for result in self.do_query(path, query, retrieve, offset, limit)]
         ret = []
@@ -429,7 +429,6 @@ class Session(object):
         Backends overriding this method should be careful of
         deduplication efforts.
         """
-        print "Performing commit..."
         operations = {}
         operations['additions'] = []
         for gob in self.operations['additions']:
@@ -652,13 +651,7 @@ class Backend(object):
 
 
     def __getattr__(self, name):
-        upstream = False
         if name[0] == '_':
-            upstream = True
-            fname = name[1:]
-        else:
-            fname = name
-        if upstream:
             return getattr(self.caller, name)
         else:
             return getattr(self.backend, name)
@@ -683,13 +676,7 @@ class StorageEngine(object):
 
 
     def __getattr__(self, name):
-        upstream = False
         if name[0] == '_':
-            upstream = True
-            fname = name[1:]
-        else:
-            fname = name
-        if upstream:
             return getattr(self.caller, name)
         else:
             return getattr(self.storage_engine, name)

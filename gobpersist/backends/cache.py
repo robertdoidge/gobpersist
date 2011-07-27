@@ -2,6 +2,8 @@ from __future__ import absolute_import
 from .. import session
 from .. import exception
 
+from copy import deepcopy
+
 class Cache(session.Backend):
     """A generic cache class, using one backend for cache and one for
     nonvolatile storage.
@@ -24,6 +26,7 @@ class Cache(session.Backend):
 
         super(Cache, self).__init__(backend)
 
+
     def query(self, path, query=None, retrieve=None,
               order=None, offset=None, limit=None):
         while True:
@@ -31,7 +34,7 @@ class Cache(session.Backend):
                 try:
                     old_backend = self.backend
                     self.backend = self.cache
-                    query_f = getattr(self.backend, 'query', self.caller._query)
+                    query_f = getattr(self.cache, 'query', self.caller._query)
                     return query_f(path, query, retrieve,
                                    order, offset, limit)
                 finally:
@@ -67,5 +70,22 @@ class Cache(session.Backend):
                         self.backend = old_backend
                     return res
 
-    #def commit(self):
-        #pass
+    def commit(self):
+        if self.backend == self.cache:
+            return self.caller._commit()
+        cache_invalidate = []
+        for coll in self.caller.operations.itervalues():
+            cache_invalidate.extend(coll)
+        self.caller._commit()
+        try:
+            old_backend = self.backend
+            self.backend = self.cache
+            try:
+                for item in cache_invalidate:
+                    self.caller.remove(item)
+                self.caller._commit()
+            except:
+                self.caller.rollback()
+                raise
+        finally:
+            self.backend = old_backend
