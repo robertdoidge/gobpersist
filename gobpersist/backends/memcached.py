@@ -1,6 +1,7 @@
 from __future__ import absolute_import
 from . import gobkvquerent
 from .. import exception
+from .. import session
 
 import pylibmc
 import time
@@ -42,7 +43,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
 
     def do_query(self, path, query=None, retrieve=None, offset=None, limit=None):
         # ignore everything but path
-        res = self.mc.get(".".join(path))
+        res = self.mc.get(str(".".join(path)))
         if res == None:
             raise exception.NotFound(
                 "Could not find value for key %s" \
@@ -58,7 +59,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                 ret = []
                 for path in store:
                     ret.append(self.do_query(path)[0])
-                    return ret
+                return ret
             else:
                 # Reference
                 return [self.do_query(path=store)]
@@ -133,14 +134,12 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         for lock in locks:
             self.mc.set(lock, "\0")
 
-    def value_to_pvalue(self, value, use_persisted_version=False):
-        value = self.caller._value_to_pvalue(value, use_persisted_version)
-        if isinstance(value, datetime.datetime):
-            return value.isoformat()
-        elif value is None:
-            return '_NULL'
-        else:
-            return value
+    def path_to_ppath(self, path, use_persisted_version=False):
+        ppath = self.caller._path_to_ppath(path, use_persisted_version)
+        return tuple([pathelem.isoformat() if isinstance(pathelem, datetime.datetime) \
+                          else '_NULL_' if pathelem is None \
+                          else str(pathelem) \
+                          for pathelem in ppath])
 
     def do_commit(self, operations):
         # Build the set of commits
@@ -149,46 +148,46 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         to_delete = []
         collection_add = []
         collection_remove = []
-        locks = []
+        locks = set()
         conditions = []
 
         print repr(operations)
 
         for addition in operations['additions']:
             to_add.append((addition['path'], addition['item'],))
-            locks.append(self.lock_prefix + '.' + '.'.join(addition['path']))
+            locks.add(self.lock_prefix + '.' + '.'.join(addition['path']))
             for path in addition['unique_keys']:
                 to_add.append((path, addition['path'],))
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
             for path in addition['keys']:
                 collection_add.append((path, addition['path'],))
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
 
         for update in operations['updates']:
             to_set.append((update['path'], update['item'],))
-            locks.append(self.lock_prefix + '.' + '.'.join(update['path']))
+            locks.add(self.lock_prefix + '.' + '.'.join(update['path']))
             for path in update['old_unique_keys']:
                 to_delete.append(path)
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
             for path in update['old_keys']:
                 collection_remove.append((path, update['path'],))
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
             for path in update['new_unique_keys']:
                 to_add.append((path, update['path'],))
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
             for path in update['new_keys']:
                 collection_add.append((path, update['path'],))
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
 
         for removal in operations['removals']:
             to_delete.append(removal['path'])
-            locks.append(self.lock_prefix + '.' + '.'.join(removal['path']))
+            locks.add(self.lock_prefix + '.' + '.'.join(removal['path']))
             for path in removal['unique_keys']:
                 to_delete.append(path)
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
             for path in removal['keys']:
                 collection_remove.append((path, removal['path'],))
-                locks.append(self.lock_prefix + '.' + '.'.join(path))
+                locks.add(self.lock_prefix + '.' + '.'.join(path))
 
         # Acquire locks
         self.acquire_locks(locks)
@@ -236,7 +235,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                 if res is None:
                     self.mc.set('.'.join(c_add[0]), self.serializer.dumps([c_add[1]]))
                 else:
-                    res = set(self.serializer.loads(res))
+                    res = set([tuple(path) for path in self.serializer.loads(res)])
                     res.add(c_add[1])
                     self.mc.set('.'.join(c_add[0]), self.serializer.dumps(list(res)))
             for setting in to_set:
@@ -246,7 +245,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             for c_rm in collection_remove:
                 res = self.mc.get('.'.join(c_rm[0]))
                 if res is not None:
-                    res = set(self.serializer.loads(res))
+                    res = set([tuple(path) for path in self.serializer.loads(res)])
                     res.discard(c_rm[1])
                     self.mc.set('.'.join(c_rm[0]), self.serializer.dumps(list(res)))
         finally:

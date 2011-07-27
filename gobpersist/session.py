@@ -55,6 +55,11 @@ class Session(object):
             }
         """The operations currently queued but not yet performed."""
 
+        self.paused_transactions = []
+        """A list of nested transactions, not including the current
+        one.
+        """
+
         self.backend = backend
         """The back end for this session."""
 
@@ -404,12 +409,27 @@ class Session(object):
             return value
 
     @delegable('backend')
+    def start_transaction(self):
+        """Starts a new transaction.
+
+        Since there is always an implicit transaction with gobpersist,
+        this actually always starts a *nested* transaction.
+        """
+        self.paused_transactions.append(self.operations)
+        self.operations = {
+            'additions': set(),
+            'removals': set(),
+            'updates': set()
+            }
+
+    @delegable('backend')
     def commit(self):
         """Commit all pending changes.
 
         Backends overriding this method should be careful of
         deduplication efforts.
         """
+        print "Performing commit..."
         operations = {}
         operations['additions'] = []
         for gob in self.operations['additions']:
@@ -503,15 +523,18 @@ class Session(object):
         for operation in self.operations.itervalues():
             for gob in operation:
                 gob.mark_persisted()
-        self.operations = {
-            'additions': set(),
-            'removals': set(),
-            'updates': set()
-            }
+        if self.paused_transactions:
+            self.operations = self.paused_transactions.pop()
+        else:
+            self.operations = {
+                'additions': set(),
+                'removals': set(),
+                'updates': set()
+                }
 
 
     @delegable('backend')
-    def rollback(revert=False):
+    def rollback(self, revert=False):
         """Roll back the transaction.
 
         If revert is False (the default), then individual gobs are not
@@ -635,12 +658,7 @@ class Backend(object):
             fname = name[1:]
         else:
             fname = name
-        sfunc = getattr(Session, fname, None)
-        if sfunc is None \
-                or not isinstance(sfunc, Delegable) \
-                or not sfunc.name == 'backend':
-            raise AttributeError
-        elif upstream:
+        if upstream:
             return getattr(self.caller, name)
         else:
             return getattr(self.backend, name)
@@ -671,12 +689,7 @@ class StorageEngine(object):
             fname = name[1:]
         else:
             fname = name
-        sfunc = getattr(Session, fname, None)
-        if sfunc is None \
-                or not isinstance(sfunc, Delegable) \
-                or not sfunc.name == 'storage_engine':
-            raise AttributeError
-        elif upstream:
+        if upstream:
             return getattr(self.caller, name)
         else:
             return getattr(self.storage_engine, name)
