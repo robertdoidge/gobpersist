@@ -84,22 +84,10 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         while tries > 0:
             for lock in locks:
                 while True:
-                    (status, cas) = self.mc.gets(lock)
-                    print "status=%s cas=%s" % (repr(status), repr(cas))
-                    if status == "\0":
-                        # Lock the object
-                        if self.mc.cas(lock, "\1", cas):
-                            locks_acquired.append(lock)
-                            break
-                        else:
-                            continue
-                    elif status is None:
-                        # Lock the object
-                        if self.mc.add(lock, "\1"):
-                            locks_acquired.append(lock)
-                            break
-                        else:
-                            continue                        
+                    # Lock the object
+                    if self.mc.add(lock, 'locked'):
+                        locks_acquired.append(lock)
+                        break
                     else:
                         # The object is locked!
                         # Back out all acquired locks and start over
@@ -125,14 +113,14 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         for lock in locks:
             # Hail Mary!
             # Lock the object
-            self.mc.set(lock, "\1")
+            self.mc.set(lock, 'locked')
             locks_acquired.append(lock)
 
 
     def release_locks(self, locks):
         """Releases a set of locks."""
         for lock in locks:
-            self.mc.set(lock, "\0")
+            self.mc.delete(lock)
 
     def path_to_ppath(self, path, use_persisted_version=False):
         ppath = self.caller._path_to_ppath(path, use_persisted_version)
@@ -140,6 +128,23 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                           else '_NULL_' if pathelem is None \
                           else str(pathelem) \
                           for pathelem in ppath])
+
+
+    def do_add_collection(self, path):
+        self.acquire_locks((self.lock_prefix + '.' + '.'.join(path),))
+        try:
+            self.mc.set('.'.join(path), self.serializer.dumps([]))
+        finally:
+            self.release_locks((self.lock_prefix + '.' + '.'.join(path),))
+
+
+    def do_remove_collection(self, path):
+        self.acquire_locks((self.lock_prefix + '.' + '.'.join(path),))
+        try:
+            self.mc.delete('.'.join(path))
+        finally:
+            self.release_locks((self.lock_prefix + '.' + '.'.join(path),))
+
 
     def do_commit(self, operations):
         # Build the set of commits
@@ -200,9 +205,12 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                         # DON'T replace this with a simple .query()
                         # call, as that will interact with
                         # deduplication in weird ways.
-                        gob = self.caller._create_gob(self.do_query(update['path'])[0])
+                        res = self.do_query(update['path'])
+                        if len(res) == 0:
+                            continue
+                        gob = self.caller._create_gob(update['gob'].__class__, res[0])
                         if not self._execute_query(gob, update['conditions']):
-                            raise ConditionFailed(
+                            raise exception.ConditionFailed(
                                 "The conditions '%s' could not be met for" \
                                     " object '%s'" % (repr(update['conditions']),
                                                       repr(update['path'])))
@@ -215,9 +223,12 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                         # DON'T replace this with a simple .query()
                         # call, as that will interact with
                         # deduplication in weird ways.
-                        gob = self.caller._create_gob(self.do_query(removal['path'])[0])
+                        res = self.do_query(removal['path'])
+                        if len(res) == 0:
+                            continue
+                        gob = self.caller._create_gob(removal['gob'].__class__, res[0])
                         if not self._execute_query(gob, removal['conditions']):
-                            raise ConditionFailed(
+                            raise exception.ConditionFailed(
                                 "The conditions '%s' could not be met for" \
                                     " object '%s'" % (repr(removal['conditions']),
                                                       repr(removal['path'])))

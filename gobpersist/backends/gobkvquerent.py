@@ -2,6 +2,8 @@ from __future__ import absolute_import
 from .. import session
 from .. import gob
 
+import operator
+
 class GobKVQuerent(session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
     aren't able to implement complex queries."""
@@ -36,6 +38,7 @@ class GobKVQuerent(session.Backend):
 
     def _apply_operator(self, gob, op, arg1, arg2):
         """Apply operator to the two arguments, taking quantifiers into account."""
+        print "applying operator %s to %s and %s" % (repr(op), repr(arg1), repr(arg2))
         if isinstance(arg1, dict):
             if len(arg1) > 1:
                 raise ValueError("Too many keys in quantifier")
@@ -87,6 +90,7 @@ class GobKVQuerent(session.Backend):
     def _execute_query(self, gob, query):
         """Execute a query on an object, returning True if it matches
         the query and False otherwise."""
+        print "executing %s on %s" % (repr(query), repr(gob))
         for cmd, args in query.iteritems():
             if cmd in ('eq', 'ne', 'lt', 'gt', 'ge', 'le'):
                 if len(args) < 2:
@@ -118,7 +122,7 @@ class GobKVQuerent(session.Backend):
         ret = []
         current = -1
         for item in res:
-            if not self._execute_query(item, query):
+            if query is not None and not self._execute_query(item, query):
                 continue
             current += 1
             if offset is not None and current < offset:

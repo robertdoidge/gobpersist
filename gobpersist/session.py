@@ -105,6 +105,40 @@ class Session(object):
 
 
     @delegable('backend')
+    def add_collection(self, path):
+        """Create an empty collection identified by path."""
+        self.do_add_collection(self.path_to_ppath(path))
+
+
+    @delegable('backend')
+    def do_add_collection(self, path):
+        """Actually perform the collection addition.
+
+        Backends should provide this method if add_collection is to be
+        supported.
+        """
+        raise NotImplementedError("Backend type '%s' does not implement" \
+                                      " do_add_collection" % type(self.backend))
+
+
+    @delegable('backend')
+    def remove_collection(self, path):
+        """Remove a particular collection identified by path."""
+        self.do_remove_collection(self.path_to_ppath(path))
+
+
+    @delegable('backend')
+    def do_remove_collection(self, path):
+        """Actually perform the collection removal.
+
+        Backends should provide this method if remove_collection is to be
+        supported.
+        """
+        raise NotImplementedError("Backend type '%s' does not implement" \
+                                      " do_remove_collection" % type(self.backend))
+
+
+    @delegable('backend')
     def query_to_pquery(self, cls, query):
         """Transform a query into a query that is more palatable to the
         backend."""
@@ -433,7 +467,7 @@ class Session(object):
         operations['additions'] = []
         for gob in self.operations['additions']:
             op = {
-                'path': self.path_to_ppath(gob.path()),
+                'path': self.path_to_ppath(gob.path()[:-1]),
                 'keys': [self.path_to_ppath(path) \
                              for path in gob.keys],
                 'unique_keys': [self.path_to_ppath(path) \
@@ -498,7 +532,8 @@ class Session(object):
                 'keys': [self.path_to_ppath(path, True) \
                              for path in gob.keys],
                 'unique_keys': [self.path_to_ppath(path, True) \
-                                    for path in gob.unique_keys]
+                                    for path in gob.unique_keys],
+                'gob': gob
                 }
             for key in dir(gob):
                 f = getattr(gob, key)

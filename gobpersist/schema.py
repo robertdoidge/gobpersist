@@ -103,7 +103,7 @@ class SchemaCollection(object):
                     setattr(gob, key, value.value)
                 else:
                     setattr(gob, key, value)
-        gob._path = self.path
+        gob.coll_path = self.path
         gob.save()
 
 

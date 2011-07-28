@@ -57,11 +57,16 @@ class Cache(session.Backend):
                         try:
                             #self.caller.start_transaction()
                             print "iterating over items..."
-                            for item in res:
-                                # (try to) add it to the cache
-                                self.caller.add(item)
+                            if len(res) == 0:
+                                try:
+                                    self.caller.add_collection(path)
+                                except NotImplementedError:
+                                    pass
+                            else:
+                                for item in res:
+                                    # (try to) add it to the cache
+                                    self.caller.add(item)
                             print "committing changes..."
-                            print repr(self.caller.commit)
                             self.caller.commit()
                         except:
                             #self.caller.rollback()
@@ -73,16 +78,28 @@ class Cache(session.Backend):
     def commit(self):
         if self.backend == self.cache:
             return self.caller._commit()
-        cache_invalidate = []
+        gob_invalidate = set()
         for coll in self.caller.operations.itervalues():
-            cache_invalidate.extend(coll)
+            gob_invalidate.update(coll)
+        collection_invalidate = set()
+        for coll in self.caller.operations.itervalues():
+            for gob in coll:
+                for path in gob.keys:
+                    collection_invalidate.add(path)
         self.caller._commit()
         try:
             old_backend = self.backend
             self.backend = self.cache
             try:
-                for item in cache_invalidate:
+                for item in gob_invalidate:
+                    print repr(item)
                     self.caller.remove(item)
+                try:
+                    for path in collection_invalidate:
+                        print repr(path)
+                        self.caller.remove_collection(path)
+                except NotImplementedError:
+                    pass
                 self.caller._commit()
             except:
                 self.caller.rollback()
