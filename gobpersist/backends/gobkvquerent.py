@@ -6,9 +6,8 @@ import operator
 
 class GobKVQuerent(session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
-    aren't able to implement complex queries."""
-
-    __metaclass__ = session.VisibleDelegatorMeta
+    aren't able to implement complex queries.
+    """
 
     def _get_value(self, gob, arg):
         """Turn an argument into a value."""
@@ -37,8 +36,11 @@ class GobKVQuerent(session.Backend):
 
 
     def _apply_operator(self, gob, op, arg1, arg2):
-        """Apply operator to the two arguments, taking quantifiers into account."""
-        print "applying operator %s to %s and %s" % (repr(op), repr(arg1), repr(arg2))
+        """Apply operator to the two arguments, taking quantifiers into account.
+        """
+        print "applying operator %s to %s and %s" % (repr(op),
+                                                     repr(arg1),
+                                                     repr(arg2))
         if isinstance(arg1, dict):
             if len(arg1) > 1:
                 raise ValueError("Too many keys in quantifier")
@@ -97,7 +99,9 @@ class GobKVQuerent(session.Backend):
                     continue
                 arg1 = args[0]
                 for arg2 in args[1:]:
-                    if not self._apply_operator(gob, getattr(operator, cmd), arg1, arg2):
+                    if not self._apply_operator(gob,
+                                                getattr(operator, cmd),
+                                                arg1, arg2):
                         return False
                     arg1 = arg2
             elif cmd == 'and':
@@ -116,9 +120,9 @@ class GobKVQuerent(session.Backend):
         return True
 
 
-    @session.delegable('backend')
-    def query(self, path, query=None, retrieve=None, order=None, offset=None, limit=None):
-        res = self.caller._query(path, {}, retrieve)
+    def query(self, path=None, path_range=None, query=None, retrieve=None,
+              order=None, offset=None, limit=None):
+        res = self.kv_query(path, path_range)
         ret = []
         current = -1
         for item in res:

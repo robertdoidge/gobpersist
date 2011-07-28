@@ -2,8 +2,6 @@ from __future__ import absolute_import
 from .. import session
 from .. import exception
 
-from copy import deepcopy
-
 class Cache(session.Backend):
     """A generic cache class, using one backend for cache and one for
     nonvolatile storage.
@@ -19,90 +17,51 @@ class Cache(session.Backend):
     cache_refill again.
     """
     def __init__(self, cache, backend):
+        self.backend = backend
+        """The "real" backend for the cache."""
         self.cache = cache
         """The backend which is to operate as a cache."""
 
-        self.cache.caller = self
 
-        super(Cache, self).__init__(backend)
-
-
-    def query(self, path, query=None, retrieve=None,
+    def query(self, path=None, path_range=None, query=None, retrieve=None,
               order=None, offset=None, limit=None):
         while True:
             try:
-                try:
-                    old_backend = self.backend
-                    self.backend = self.cache
-                    query_f = getattr(self.cache, 'query', self.caller._query)
-                    return query_f(path, query, retrieve,
-                                   order, offset, limit)
-                finally:
-                    self.backend = old_backend
+                return self.cache.query(path, path_range, query, retrieve,
+                                        order, offset, limit)
             except exception.NotFound:
                 # couldn't find it in cache
                 cache_refill = getattr(self.backend, 'cache_refill', None)
                 if cache_refill is not None:
-                    cache_refill(self.cache, path, query,
+                    cache_refill(self.cache, path, path_range, query,
                                  retrieve, order, offset, limit)
                 else:
-                    query_f = getattr(self.backend, 'query', self.caller._query)
-                    res = query_f(path, query, retrieve,
-                                  order, offset, limit)
+                    res = self.backend.query(path, path_range, query, retrieve,
+                                             order, offset, limit)
                     print "OK, got result, now saving it in cache..."
-                    try:
-                        print "swapping backends..."
-                        old_backend = self.backend
-                        self.backend = self.cache
-                        try:
-                            #self.caller.start_transaction()
-                            print "iterating over items..."
-                            if len(res) == 0:
-                                try:
-                                    self.caller.add_collection(path)
-                                except NotImplementedError:
-                                    pass
-                            else:
-                                for item in res:
-                                    # (try to) add it to the cache
-                                    self.caller.add(item)
-                            print "committing changes..."
-                            self.caller.commit()
-                        except:
-                            #self.caller.rollback()
-                            raise
-                    finally:
-                        self.backend = old_backend
+                    print "iterating over items..."
+                    if len(res) == 0:
+                        self.cache.commit(collection_additions=[path])
+                    else:
+                        self.cache.commit(additions=res)
                     return res
 
-    def commit(self):
-        if self.backend == self.cache:
-            return self.caller._commit()
-        gob_invalidate = set()
-        for coll in self.caller.operations.itervalues():
-            gob_invalidate.update(coll)
-        collection_invalidate = set()
-        for coll in self.caller.operations.itervalues():
-            for gob in coll:
-                for path in gob.keys:
-                    collection_invalidate.add(path)
-        self.caller._commit()
-        try:
-            old_backend = self.backend
-            self.backend = self.cache
-            try:
-                for item in gob_invalidate:
-                    print repr(item)
-                    self.caller.remove(item)
-                try:
-                    for path in collection_invalidate:
-                        print repr(path)
-                        self.caller.remove_collection(path)
-                except NotImplementedError:
-                    pass
-                self.caller._commit()
-            except:
-                self.caller.rollback()
-                raise
-        finally:
-            self.backend = old_backend
+    def commit(self, additions=[], updates=[], removals=[],
+               collection_additions=[], collection_removals=[]):
+        gob_invalidate = []
+        collection_invalidate = set(collection_additions, collection_removals)
+        for op in itertools.chain(additions, updates, removals):
+            new_op = {
+                'gob': op['gob'],
+                'remove_unique_keys': op['remove_unique_keys'] + op['add_unique_keys']
+                }
+            gob_invalidate.append(new_op)
+            for path in itertools.chain(op['gob'].keys,
+                                        op['add_keys'],
+                                        op['remove_keys']):
+                collection_invalidate.add(path)
+
+        self.backend.commit(additions, updates, removals,
+                            collection_additions, collection_removals)
+        self.cache.commit(removals=gob_invalidate,
+                          collection_removals=collection_invalidate)

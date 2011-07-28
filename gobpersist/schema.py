@@ -79,13 +79,13 @@ class SchemaCollection(object):
         """
         if _query is None:
             _query = self._translate_query(kwargs)
-        return self.session.query(self.path, _query)
+        return self.session.query(path=self.path, query=_query)
 
 
     def get(self, primary_key):
         """Get an item with a specific primary key."""
         path = self.path + (primary_key,)
-        res = self.session.query(path)
+        res = self.session.query(path=path)
         if res:
             res = res[0]
             res.coll_path = self.path
