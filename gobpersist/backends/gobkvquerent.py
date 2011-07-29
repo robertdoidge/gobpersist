@@ -120,9 +120,9 @@ class GobKVQuerent(session.Backend):
         return True
 
 
-    def query(self, path=None, path_range=None, query=None, retrieve=None,
+    def query(self, cls, key=None, key_range=None, query=None, retrieve=None,
               order=None, offset=None, limit=None):
-        res = self.kv_query(path, path_range)
+        res = self.kv_query(cls, key, key_range)
         ret = []
         current = -1
         for item in res:

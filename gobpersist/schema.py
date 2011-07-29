@@ -22,27 +22,28 @@ class SchemaCollection(object):
 
     The full query language is available by the _query parameter.
     """
-    def __init__(self, session, path, sticky=None, autoset=None):
+    def __init__(self, cls, session, key, sticky=None, autoset=None):
+        self.cls = cls
+        """The class of which objects of this SchemaCollection are
+        instances."""
 
         self.session = session
         """The session for this SchemaCollection."""
 
-        self.path = path
-        """The path for this SchemaCollection."""
+        self.key = key
+        """The key for this SchemaCollection."""
 
         self.sticky = sticky
         """A query fragment which is always added to the query."""
 
         self.autoset = autoset
         """A dictionary of key-value pairs that will be set on each
-        added item.
-        """
+        added item."""
 
 
     def _translate_qelem(self, k, v):
         """Translate an element of a query into normal query
-        format.
-        """
+        format."""
         if k == 'and':
             return self._translate_query(v)
         elif k == 'or':
@@ -79,17 +80,23 @@ class SchemaCollection(object):
         """
         if _query is None:
             _query = self._translate_query(kwargs)
-        return self.session.query(path=self.path, query=_query)
+        return self.session.query(cls=self.cls, key=self.key, query=_query)
 
 
     def get(self, primary_key):
         """Get an item with a specific primary key."""
-        path = self.path + (primary_key,)
-        res = self.session.query(path=path)
+        key = []
+        for keyelem in self.cls.obj_key:
+            if isinstance(keyelem, field.Field) \
+                    and keyelem.primary_key:
+                f = keyelem.clone(clean_break=True)
+                f.set(primary_key)
+                key.append(f)
+            else:
+                key.append(keyelem)
+        res = self.session.query(cls=self.cls, key=tuple(key))
         if res:
-            res = res[0]
-            res.coll_path = self.path
-            return res
+            return res[0]
         else:
             return None
 
@@ -103,7 +110,6 @@ class SchemaCollection(object):
                     setattr(gob, key, value.value)
                 else:
                     setattr(gob, key, value)
-        gob.coll_path = self.path
         gob.save()
 
 
@@ -112,6 +118,7 @@ class SchemaCollection(object):
 
         This is equivalent to calling gob.save()
         """
+        gob.session = self.session
         gob.save()
 
 
@@ -120,6 +127,7 @@ class SchemaCollection(object):
 
         This is equivalent to calling gob.remove()
         """
+        gob.session = self.session
         gob.remove()
 
 
@@ -136,14 +144,15 @@ class Schema(object):
 
         for name in dir(self):
             collection = getattr(self, name)
-            if isinstance(collection, type) and issubclass(collection, gob.Gob):
-                setattr(self, name, SchemaCollection(session, collection.coll_path))
-
+            if isinstance(collection, type) \
+                    and issubclass(collection, gob.Gob):
+                setattr(self, name, SchemaCollection(cls=collection,
+                                                     session=session,
+                                                     key=collection.coll_key))
 
     def __getattr__(self, name):
         return getattr(self.session, name)
 
-
-    def collection_for_path(self, path):
-        """Create a collection that corresponds to a given path."""
-        return SchemaCollection(self.session, path)
+    def collection_for_key(self, key):
+        """Create a collection that corresponds to a given key."""
+        return SchemaCollection(self.session, key)

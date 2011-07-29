@@ -21,17 +21,24 @@ class Gob(object):
     Set automatically.
     """
 
-    collection_name = None
-    """Name of the collection this class represents.
+    class_key = None
+    """Name of the key for this class.
 
     The default is the name of the class, lower-cased, plus an 's'.
-    Subclasses should set this in order to override the default.
     """
 
-    coll_path = None
-    """The path for the collection this class represents.
+    obj_key = None
+    """Primary key for objects of this class.
 
-    Default is (collection_name,).
+    The default is (class_key, primary_key).
+    """
+
+    coll_key = None
+    """Key for objects of this collection.
+
+    The default is (class_key,).  Note that by default no objects will
+    be stored here; you must add it to the return value of keyset when
+    that is appropriate.
     """
 
     keys = []
@@ -53,35 +60,31 @@ class Gob(object):
     implementation.
     """
 
-    def store_in_root(self):
-        """This function is called to determine whether this
-        particular object should be stored in the "root collection",
-        i.e. the collection identified by the collection path without
-        any additional qualifiers.
+    def keyset(self):
+        """This function is called to determine which keys under which
+        to store this object.
 
-        By default, this method simply returns "False" and the
-        collection is disabled.
+        By default, this method simply returns the 'keys' list.
         """
-        return False
+        return self.keys
 
-    def store_in_root_changed(self):
-        """This function determines whether store_in_root has changed
-        since the object was persisted.
+    def unique_keyset(self):
+        """This function is called to determine which keys under which
+        to store this object.
+
+        By default, this method simply returns the 'unique_keys' list.
         """
-        return False
+        return self.unique_keys
 
     @classmethod
     def reload_class(cls):
         """Reload the class as if it was recreated from the metaclass.
         """
+        # set up fields
         primary_key = None
-        if 'collection_name' not in cls.__dict__:
-            cls.collection_name = cls.__name__.lower() + 's'
-        if 'coll_path' not in cls.__dict__:
-            cls.coll_path = (cls,)
         for key, value in cls.__dict__.iteritems():
             if key != 'primary_key' and isinstance(value, field.Field):
-                value._key = field_key(key)
+                value.instance_key = field_key(key)
                 value._name = key
                 if value.primary_key:
                     if primary_key:
@@ -94,29 +97,14 @@ class Gob(object):
                     if value.foreign_class == 'self':
                         value.foreign_class = cls
 
-        # scan for 'self' in keys and unique_keys
-        new_keys = []
-        for path in cls.keys:
-            new_path = []
-            for pathelem in path:
-                if pathelem == 'self':
-                    new_path.append(cls)
-                else:
-                    new_path.append(pathelem)
-            new_keys.append(tuple(new_path))
-        cls.keys = new_keys
-        new_unique_keys = []
-        for path in cls.unique_keys:
-            new_path = []
-            for pathelem in path:
-                if pathelem == 'self':
-                    new_path.append(cls)
-                else:
-                    new_path.append(pathelem)
-            new_unique_keys.append(tuple(new_path))
-        cls.unique_keys = new_unique_keys
-
         cls.primary_key = primary_key
+
+        if 'class_key' not in cls.__dict__:
+            cls.class_key = cls.__name__.lower() + 's'
+        if 'obj_key' not in cls.__dict__:
+            cls.obj_key = (cls.class_key, cls.primary_key)
+        if 'coll_key' not in cls.__dict__:
+            cls.coll_key = (cls.class_key,)
 
 
     def __init__(self, session=None, _incoming_data=False, **kwdict):
@@ -141,32 +129,31 @@ class Gob(object):
             if isinstance(value, field.Field):
                 value = value.clone()
                 value.instance = self
-                self.__dict__[value._key] = value
+                self.__dict__[value.instance_key] = value
                 if value.primary_key:
                     self.__dict__['primary_key'] = value
 
         # make indices refer to local fields
-        new_keys = []
-        for path in self.keys:
-            new_path = []
-            for pathelem in path:
-                if isinstance(pathelem, field.Field) \
-                        and pathelem.instance is None:
-                    pathelem = self.__dict__[pathelem._key]
-                new_path.append(pathelem)
-            new_keys.append(tuple(new_path))
-        self.keys = new_keys
-
-        new_unique_keys = []
-        for path in self.unique_keys:
-            new_path = []
-            for pathelem in path:
-                if isinstance(pathelem, field.Field) \
-                        and pathelem.instance is None:
-                    pathelem = self.__dict__[pathelem._key]
-                new_path.append(pathelem)
-            new_unique_keys.append(tuple(new_path))
-        self.unique_keys = new_unique_keys
+        self.keys \
+            = [tuple([self.__dict__[keyelem.instance_key] \
+                                  if isinstance(keyelem, field.Field) \
+                                  and keyelem.instance is None \
+                              else keyelem \
+                          for keyelem in path]) \
+                   for path in self.keys]
+        self.unique_keys \
+            = [tuple([self.__dict__[keyelem.instance_key] \
+                                  if isinstance(keyelem, field.Field) \
+                                  and keyelem.instance is None \
+                              else keyelem \
+                          for keyelem in path]) \
+                   for path in self.unique_keys]
+        self.obj_key \
+            = tuple([self.__dict__[keyelem.instance_key] \
+                                 if isinstance(keyelem, field.Field) \
+                                 and keyelem.instance is None \
+                             else keyelem \
+                         for keyelem in self.obj_key])
 
         # autoset fields according to constructor arguments
         for key, value in kwdict.iteritems():
@@ -218,7 +205,7 @@ class Gob(object):
         
 
     def prepare_update(self):
-        """Prepare this object for persistence.
+        """Prepares this object to be updated in the store.
 
         Don't call this method directly unless you know what you're
         doing.
@@ -241,7 +228,7 @@ class Gob(object):
         """Reverts the object to the persisted version.
 
         This does not clear any pending operations on this object; for
-        that you must use session.revert()."""
+        that you must use session.rollback()."""
         for value in self.__dict__.itervalues():
             if isinstance(value, field.Field):
                 value.revert()
@@ -256,20 +243,9 @@ class Gob(object):
         self.persisted = True
         self.dirty = False
 
-        # Why was this here??
-        # self._path = None
-
         for value in self.__dict__.itervalues():
             if isinstance(value, field.Field):
                 value.mark_persisted()
-
-
-    def path(self):
-        """Returns the path of this object."""
-        if self._path is not None:
-            return self._path
-        else:
-            return self.coll_path + (self.primary_key,)
 
 
     def __repr__(self):
@@ -283,16 +259,16 @@ class Gob(object):
                                 and not isinstance(x, field.Foreign),
                             self.__dict__.values())] \
                     + ["keys=[%s]" \
-                       % ', '.join(["(%s)" % ', '.join([pathelem.coll_name if isinstance(pathelem, Gob) \
-                                                            else "%s=%s" % (pathelem._name, repr(pathelem.value)) \
-                                                                if isinstance(pathelem, field.Field)
-                                                        else repr(pathelem)
-                                                        for pathelem in path]) \
+                       % ', '.join(["(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
+                                                            else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
+                                                                if isinstance(keyelem, field.Field)
+                                                        else repr(keyelem)
+                                                        for keyelem in path]) \
                                         for path in self.keys]),
                        "unique_keys=[%s]" \
-                       % ', '.join(["(%s)" % ', '.join([pathelem.coll_name if isinstance(pathelem, Gob) \
-                                                            else "%s=%s" % (pathelem._name, repr(pathelem.value)) \
-                                                                if isinstance(pathelem, field.Field) \
-                                                            else repr(pathelem) \
-                                                            for pathelem in path]) \
+                       % ', '.join(["(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
+                                                            else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
+                                                                if isinstance(keyelem, field.Field) \
+                                                            else repr(keyelem) \
+                                                            for keyelem in path]) \
                                         for path in self.unique_keys])])))

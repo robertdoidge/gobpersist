@@ -25,12 +25,12 @@ class Cache(session.Backend):
         """The backend which is to operate as a cache."""
 
 
-    def query(self, path=None, path_range=None, query=None, retrieve=None,
+    def query(self, cls, path=None, path_range=None, query=None, retrieve=None,
               order=None, offset=None, limit=None):
         while True:
             try:
-                return self.cache.query(path, path_range, query, retrieve,
-                                        order, offset, limit)
+                return self.cache.query(cls, path, path_range, query,
+                                        retrieve, order, offset, limit)
             except exception.NotFound:
                 # couldn't find it in cache
                 cache_refill = getattr(self.backend, 'cache_refill', None)
@@ -38,8 +38,8 @@ class Cache(session.Backend):
                     cache_refill(self.cache, path, path_range, query,
                                  retrieve, order, offset, limit)
                 else:
-                    res = self.backend.query(path, path_range, query, retrieve,
-                                             order, offset, limit)
+                    res = self.backend.query(cls, path, path_range, query,
+                                             retrieve, order, offset, limit)
                     print "OK, got result, now saving it in cache..."
                     print "iterating over items..."
                     if len(res) == 0:
@@ -65,7 +65,7 @@ class Cache(session.Backend):
                 'remove_unique_keys': remove_unique_keys
                 }
             gob_invalidate.append(new_op)
-            add_keys = op['gob'].keys
+            add_keys = op['gob'].keyset()
             if 'add_keys' in op:
                 add_keys = itertools.chain(add_keys, op['add_keys'])
             if 'remove_keys' in op:
@@ -75,7 +75,7 @@ class Cache(session.Backend):
                 collection_invalidate.add(path)
 
         ret = self.backend.commit(additions, updates, removals,
-                            collection_additions, collection_removals)
+                                  collection_additions, collection_removals)
         self.cache.commit(removals=gob_invalidate,
                           collection_removals=collection_invalidate)
         return ret

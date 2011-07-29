@@ -22,12 +22,10 @@ class PickleWrapper(object):
 class MemcachedBackend(gobkvquerent.GobKVQuerent):
     """Gob back end which uses memcached for storage"""
 
-    def __init__(self, servers=['127.0.0.1'], binary=True,
+    def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
                  serializer=PickleWrapper, lock_prefix='_lock',
                  *args, **kwargs):
-
         behaviors = {'ketama': True, 'cas': True}
-
         for key, value in kwargs.iteritems():
             behaviors[key] = value
 
@@ -41,15 +39,18 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         """A string to prepend to a key value to represent the lock
         for that key."""
 
+        self.expiry = expiry
+        """The expiry time for all values set during this session, in
+        number of seconds."""
+
         super(MemcachedBackend, self).__init__()
 
-
-    def do_kv_query(self, path, cls):
-        res = self.mc.get(str(".".join(path)))
+    def do_kv_query(self, cls, key):
+        res = self.mc.get(str(".".join(key)))
         if res == None:
             raise exception.NotFound(
                 "Could not find value for key %s" \
-                    % ".".join(path))
+                    % ".".join(key))
         store = self.serializer.loads(res)
         if isinstance(store, (list, tuple)):
             # Collection or reference?
@@ -59,24 +60,21 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             elif isinstance(store[0], (list, tuple)):
                 # Collection
                 ret = []
-                for path in store:
-                    ret.append(self.do_kv_query(path, cls)[0])
+                for key in store:
+                    ret.append(self.do_kv_query(cls, key)[0])
                 return ret
             else:
                 # Reference
-                return self.do_kv_query(store, cls)
+                return self.do_kv_query(cls, store)
         else:
             # Object
             return [self.mygob_to_gob(cls, store)]
 
-
-    def kv_query(self, path=None, path_range=None):
-        if path_range is not None:
-            raise exception.UnsupportedError("path_range is not supported by" \
+    def kv_query(self, cls, key=None, key_range=None):
+        if key_range is not None:
+            raise exception.UnsupportedError("key_range is not supported by" \
                                                  " memcached")
-        return self.do_kv_query(self.path_to_mypath(path),
-                                self.cls_for_path(path))
-
+        return self.do_kv_query(cls, self.key_to_mykey(key))
 
     def acquire_locks(self, locks):
         """Atomically acquires a set of locks."""
@@ -94,7 +92,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         while tries > 0:
             for lock in locks:
                 # Lock the object
-                if self.mc.add(lock, 'locked'):
+                if self.mc.add(lock, '1'):
                     locks_acquired.append(lock)
                 else:
                     # The object is locked!
@@ -103,7 +101,8 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                     locks_acquired = []
                     break
             else:
-                # We acquired all the locks
+                # No break means we acquired all the locks
+                # "else" is a poor choice of nomenclature here...
                 return locks_acquired
 
             # We failed to acquire all the locks; loop and try again
@@ -118,39 +117,18 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             self.mc.set(lock, 'locked')
             locks_acquired.append(lock)
 
-
     def release_locks(self, locks):
         """Releases a set of locks."""
-        for lock in locks:
-            self.mc.delete(lock)
+        self.mc.delete_multi(locks)
 
-
-    def path_to_mypath(self, path, use_persisted_version=False):
-        mypath = super(MemcachedBackend, self).path_to_mypath(
-            path,
-            use_persisted_version)
-        return tuple([pathelem.isoformat() \
-                              if isinstance(pathelem, datetime.datetime) \
-                          else '_NULL_' if pathelem is None \
-                          else str(pathelem) \
-                          for pathelem in mypath])
-
-
-    def do_add_collection(self, path):
-        self.acquire_locks((self.lock_prefix + '.' + '.'.join(path),))
-        try:
-            self.mc.set('.'.join(path), self.serializer.dumps([]))
-        finally:
-            self.release_locks((self.lock_prefix + '.' + '.'.join(path),))
-
-
-    def do_remove_collection(self, path):
-        self.acquire_locks((self.lock_prefix + '.' + '.'.join(path),))
-        try:
-            self.mc.delete('.'.join(path))
-        finally:
-            self.release_locks((self.lock_prefix + '.' + '.'.join(path),))
-
+    def key_to_mykey(self, key, use_persisted_version=False):
+        mykey = super(MemcachedBackend, self).key_to_mykey(key,
+                                                           use_persisted_version)
+        return tuple([keyelem.isoformat() \
+                                  if isinstance(keyelem, datetime.datetime) \
+                              else '_NULL_' if keyelem is None \
+                              else str(keyelem) \
+                          for keyelem in mykey])
 
     def commit(self, additions=[], updates=[], removals=[],
                collection_additions=[], collection_removals=[]):
@@ -165,126 +143,109 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
 
         for addition in additions:
             gob = addition['gob']
-            gob_path = self.path_to_mypath(gob.path())
-            locks.add(self.lock_prefix + '.' + '.'.join(gob_path))
-            to_add.append((gob_path,
-                           self.gob_to_mygob(gob)))
-            if gob.store_in_root():
-                collection_add.append(
-                    (self.path_to_mypath(gob.coll_path), gob_path))
+            gob_key = self.key_to_mykey(gob.obj_key)
+            locks.add(self.lock_prefix + '.' + '.'.join(gob_key))
+            to_add.append((gob_key, self.gob_to_mygob(gob)))
             if 'add_unique_keys' in addition:
                 add_unique_keys = itertools.chain(
-                    gob.unique_keys,
+                    gob.unique_keyset(),
                     addition['add_unique_keys'])
             else:
-                add_unique_keys = gob.unique_keys
+                add_unique_keys = gob.unique_keyset()
             if 'add_keys' in addition:
                 add_keys = itertools.chain(
-                    gob.keys,
+                    gob.keyset(),
                     addition['add_keys'])
             else:
-                add_keys = gob.keys
-            for path in itertools.imap(
-                self.path_to_mypath,
-                add_unique_keys):
-                locks.add(self.lock_prefix + '.' + '.'.join(path))
-                to_add.append((path, gob_path))
-            for path in itertools.imap(
-                self.path_to_mypath,
-                add_keys):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    collection_add.append((path, gob_path))
-
+                add_keys = gob.keyset()
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    add_unique_keys):
+                locks.add(self.lock_prefix + '.' + '.'.join(key))
+                to_add.append((key, gob_key))
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    add_keys):
+                locks.add(self.lock_prefix + '.' + '.'.join(key))
+                collection_add.append((key, gob_key))
 
         for update in updates:
             gob = update['gob']
-            gob_path = self.path_to_mypath(gob.path())
-            locks.add(self.lock_prefix + '.' + '.'.join(gob_path))
-            to_set.append((gob_path,
-                           self.gob_to_mygob(gob)))
-            if gob.store_in_root_changed():
-                if gob.store_in_root():
-                    collection_add.append(
-                        (self.path_to_mypath(gob.coll_path), gob_path))
-                else:
-                    collection_remove.append(
-                        self.path_to_mypath(gob.coll_path))
-            for path in gob.unique_keys:
-                for f in path:
+            gob_key = self.key_to_mykey(gob.obj_key)
+            locks.add(self.lock_prefix + '.' + '.'.join(gob_key))
+            to_set.append((gob_key, self.gob_to_mygob(gob)))
+            for key in gob.unique_keyset():
+                for f in key:
                     if isinstance(f, field.Field) and f.dirty:
-                        new_path = self.path_to_mypath(path)
-                        old_path = self.path_to_mypath(path, True)
-                        locks.add(self.lock_prefix + '.' + '.'.join(new_path))
-                        locks.add(self.lock_prefix + '.' + '.'.join(old_path))
-                        to_delete.append(old_path)
-                        to_add.append((new_path, gob_path))
+                        new_key = self.key_to_mykey(key)
+                        old_key = self.key_to_mykey(key, True)
+                        locks.add(self.lock_prefix + '.' + '.'.join(new_key))
+                        locks.add(self.lock_prefix + '.' + '.'.join(old_key))
+                        to_delete.append(old_key)
+                        to_add.append((new_key, gob_key))
                         break
-            for path in gob.keys:
-                for f in path:
+            for key in gob.keyset():
+                for f in key:
                     if isinstance(f, field.Field) and f.dirty:
-                        new_path = self.path_to_mypath(path)
-                        old_path = self.path_to_mypath(path, True)
-                        locks.add(self.lock_prefix + '.' + '.'.join(new_path))
-                        locks.add(self.lock_prefix + '.' + '.'.join(old_path))
-                        collection_remove.append((old_path, gob_path))
-                        collection_add.append((new_path, gob_path))
+                        new_key = self.key_to_mykey(key)
+                        old_key = self.key_to_mykey(key, True)
+                        locks.add(self.lock_prefix + '.' + '.'.join(new_key))
+                        locks.add(self.lock_prefix + '.' + '.'.join(old_key))
+                        collection_remove.append((old_key, gob_key))
+                        collection_add.append((new_key, gob_key))
                         break
             if 'add_keys' in update:
-                for path in itertools.imap(self.path_to_mypath,
+                for key in itertools.imap(self.key_to_mykey,
                                            update['add_keys']):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    collection_add.append((path, gob_path))
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    collection_add.append((key, gob_key))
             if 'add_unique_keys' in update:
-                for path in itertools.imap(self.path_to_mypath,
+                for key in itertools.imap(self.key_to_mykey,
                                            update['add_unique_keys']):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    to_add.append((path, gob_path))
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    to_add.append((key, gob_key))
             if 'remove_keys' in update:
-                for path in itertools.imap(self.path_to_mypath,
+                for key in itertools.imap(self.key_to_mykey,
                                            update['remove_keys']):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    collection_remove.append((path, gob_path))
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    collection_remove.append((key, gob_key))
             if 'remove_unique_keys' in update:
-                for path in itertools.imap(self.path_to_mypath,
+                for key in itertools.imap(self.key_to_mykey,
                                            update['remove_unique_keys']):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    to_delete.append(path)
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    to_delete.append(key)
 
         for removal in removals:
             gob = removal['gob']
-            gob_path = self.path_to_mypath(gob.path())
-            locks.add(self.lock_prefix + '.' + '.'.join(gob_path))
-            to_delete.append(gob_path)
-            if (gob.store_in_root_changed() and not gob.store_in_root()) \
-                    or gob.store_in_root():
-                collection_remove.append(
-                    self.path_to_mypath(gob.coll_path))
+            gob_key = self.key_to_mykey(gob.obj_key)
+            locks.add(self.lock_prefix + '.' + '.'.join(gob_key))
+            to_delete.append(gob_key)
             if 'remove_keys' in removal:
-                for path in itertools.imap(self.path_to_mypath,
-                                           removal['remove_keys']):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    collection_remove.append((path, gob_path))
-            if 'remove_unique_keys':
-                for path in itertools.imap(self.path_to_mypath,
-                                           removal['remove_unique_keys']):
-                    locks.add(self.lock_prefix + '.' + '.'.join(path))
-                    to_delete.append(path)
-            for path in itertools.imap(lambda x: self.path_to_mypath(x, True),
-                                       gob.keys):
-                locks.add(self.lock_prefix + '.' + '.'.join(path))
-                collection_remove.append((path, gob_path))
-            for path in itertools.imap(lambda x: self.path_to_mypath(x, True),
-                                       gob.unique_keys):
-                locks.add(self.lock_prefix + '.' + '.'.join(path))
-                to_delete.append(path)
+                for key in itertools.imap(self.key_to_mykey,
+                                          removal['remove_keys']):
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    collection_remove.append((key, gob_key))
+            if 'remove_unique_keys' in removal:
+                for key in itertools.imap(self.key_to_mykey,
+                                          removal['remove_unique_keys']):
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    to_delete.append(key)
+            for key in itertools.imap(lambda x: self.key_to_mykey(x, True),
+                                      gob.keyset()):
+                locks.add(self.lock_prefix + '.' + '.'.join(key))
+                collection_remove.append((key, gob_key))
+            for key in itertools.imap(lambda x: self.key_to_mykey(x, True),
+                                      gob.unique_keys):
+                locks.add(self.lock_prefix + '.' + '.'.join(key))
+                to_delete.append(key)
 
-        for path in itertools.imap(self.path_to_mypath, collection_additions):
-            locks.add(self.lock_prefix + '.' + '.'.join(path))
-            to_add.append((path, []))
+        for key in itertools.imap(self.key_to_mykey, collection_additions):
+            locks.add(self.lock_prefix + '.' + '.'.join(key))
+            to_add.append((key, []))
 
-        for path in itertools.imap(self.path_to_mypath, collection_removals):
-            locks.add(self.lock_prefix + '.' + '.'.join(path))
-            to_delete.append(path)
+        for key in itertools.imap(self.key_to_mykey, collection_removals):
+            locks.add(self.lock_prefix + '.' + '.'.join(key))
+            to_delete.append(key)
 
         # Acquire locks
         self.acquire_locks(locks)
@@ -294,14 +255,15 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             for alteration in itertools.chain(updates, removals):
                 if 'conditions' in alteration:
                     try:
-                        res = self.kv_query(alteration['gob'].path())
+                        res = self.kv_query(alteration['gob'].__class__,
+                                            alteration['gob'].obj_key)
                         if len(res) == 0:
                             # A collection instead of an object??
                             # This indicates some kind of corruption...
                             raise exception.Corruption(
-                                "Path %s indicates an empty collection" \
+                                "Key %s indicates an empty collection" \
                                     " instead of an object." \
-                                    % repr(alteration['gob'].path()))
+                                    % repr(alteration['gob'].obj_key))
                         gob = res[0]
                         if not self._execute_query(gob,
                                                    alteration['conditions']):
@@ -321,33 +283,41 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                 "collection_remove:", collection_remove, \
                 "locks:", locks, "conditions:", conditions
 
-
+            add_multi = {}
             for add in to_add:
-                self.mc.add('.'.join(add[0]), self.serializer.dumps(add[1]))
+                add_multi['.'.join(add[0])] = self.serializer.dumps(add[1])
+            # no add_multi??
+            self.mc.set_multi(add_multi, self.expiry)
+            c_addsrms = self.mc.get_multi(['.'.join(c_add[0]) \
+                                               for c_add \
+                                               in itertools.chain(
+                                                   collection_add,
+                                                   collection_remove)])
+            print repr(c_addsrms)
+            set_multi = {}
             for c_add in collection_add:
-                res = self.mc.get('.'.join(c_add[0]))
+                key = '.'.join(c_add[0])
+                res = c_addsrms[key] if key in c_addsrms else None
                 if res is None:
-                    self.mc.set('.'.join(c_add[0]),
-                                self.serializer.dumps([c_add[1]]))
+                    set_multi[key] = self.serializer.dumps([c_add[1]])
                 else:
                     res = set([tuple(path) \
                                    for path in self.serializer.loads(res)])
                     res.add(c_add[1])
-                    self.mc.set('.'.join(c_add[0]),
-                                self.serializer.dumps(list(res)))
+                    set_multi[key] = self.serializer.dumps(list(res))
             for setting in to_set:
-                self.mc.set('.'.join(setting[0]),
-                            self.serializer.dumps(setting[1]))
+                set_multi['.'.join(setting[0])] \
+                    = self.serializer.dumps(setting[1])
             for c_rm in collection_remove:
-                res = self.mc.get('.'.join(c_rm[0]))
+                key = '.'.join(c_rm[0])
+                res = c_addsrms[key] if key in c_addsrms else None
                 if res is not None:
                     res = set([tuple(path) \
                                    for path in self.serializer.loads(res)])
                     res.discard(c_rm[1])
-                    self.mc.set('.'.join(c_rm[0]),
-                                self.serializer.dumps(list(res)))
-            for delete in to_delete:
-                self.mc.delete('.'.join(delete))
+                    set_multi[key] = self.serializer.dumps(list(res))
+            self.mc.set_multi(set_multi, self.expiry)
+            self.mc.delete_multi(['.'.join(delete) for delete in to_delete])
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)

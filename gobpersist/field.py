@@ -12,9 +12,8 @@ class Field(object):
     """An abstract base class for defining a field type."""
 
     def __init__(self, null=False, unique=False, primary_key=False,
-                 name=None, default=None, default_update=None, revision_tag=False,
-                 modifiable=True):
-
+                 name=None, default=None, default_update=None,
+                 revision_tag=False, modifiable=True):
         self.null = null
         """Whether or not the field may be None."""
 
@@ -51,7 +50,7 @@ class Field(object):
         """Hints at the name of this field, if different from the variable name
         that refers to it."""
 
-        self._key = None
+        self.instance_key = None
         """The key used to store data on the instance."""
 
         self.dirty = True
@@ -98,12 +97,10 @@ class Field(object):
         if not self.has_value:
             self.set(self.default() if callable(self.default) else self.default)
 
-
     def prepare_update(self):
         """Prepares this field to be updated in the store."""
         if not self.dirty and self.default_update is not None:
             self.set(self.default_update(self.value))
-
 
     def trip_set(self):
         """Indicates that this field is somehow being set."""
@@ -173,17 +170,17 @@ class Field(object):
 
     def __set__(self, instance, value):
         if instance is not None:
-            instance.__dict__[self._key].set(value)
+            instance.__dict__[self.instance_key].set(value)
 
     def __get__(self, instance, owner):
         if instance is not None:
-            return instance.__dict__[self._key]
+            return instance.__dict__[self.instance_key]
         else:
             return self
 
     def __delete__(self, instance):
         if instance is not None:
-            instance.__dict__[self._key].set(None)
+            instance.__dict__[self.instance_key].set(None)
 
     # Functions for delegation
 
@@ -209,8 +206,9 @@ class Field(object):
     def __cmp__(self, other):
         return cmp(self.value, other)
     def __hash__(self):
+        hash_ = hash(self.value)
         self.immutable = True
-        return hash(self.value)
+        return hash_
     def __nonzero__(self):
         return bool(self.value)
         
@@ -223,6 +221,7 @@ class BooleanField(Field):
         if not isinstance(value, bool):
             raise TypeError("'%s' object is not a bool, but field '%s' requires"
                             " a bool" % (type(value), self._name))
+
 
 class DateTimeField(Field):
     """A field to represent a point in time."""
@@ -485,6 +484,7 @@ class NumericField(Field):
     def __coerce__(self, other):
         return coerce(self.value, other)
 
+
 class IntegerField(NumericField):
     """Field representing all integer types."""
 
@@ -525,7 +525,8 @@ class IntegerField(NumericField):
             raise TypeError("'%s' object is not integral, as required by" \
                                 " field '%s'" % (type(value), self._name))
         if value > self.maximum or value < self.minimum:
-            raise ValueError("'%s' out of range for field '%s'" % (value, self._name))
+            raise ValueError("'%s' out of range for field '%s'" \
+                                 % (value, self._name))
 
     def _set(self, value):
         if isinstance(value, int) \
@@ -597,6 +598,7 @@ class UUIDField(StringField):
         if not self.validate_re.match(value):
             raise ValueError("'%s' is not a valid UUID, as required by field" \
                                  " '%s'" % (str(value), self._name))
+
 
 class MultiField(Field):
     """An abstract field representing multiple uniformly-typed values."""
@@ -749,6 +751,7 @@ class SetField(MultiField):
         self.value.update([[self._element_to_field(element) \
                                 for element in other] \
                                for other in others])
+
     def __ior__(self, other):
         self.trip_set()
         if not isinstance(other, (set, frozenset)):
@@ -756,11 +759,13 @@ class SetField(MultiField):
             self.value |= other
         self.value |= frozenset([self._element_to_field(element) \
                                      for element in other])
+
     def intersection_update(self, *others):
         self.trip_set()
         self.value.intersection_update([[self._element_to_field(element) \
                                              for element in other] \
                                             for other in others])
+
     def __iand__(self, other):
         self.trip_set()
         if not isinstance(other, (set, frozenset)):
@@ -768,11 +773,13 @@ class SetField(MultiField):
             self.value &= other
         self.value &= frozenset([self._element_to_field(element) \
                                      for element in other])
+
     def difference_update(self, *others):
         self.trip_set()
         self.value.difference_update([[self._element_to_field(element) \
                                            for element in other] \
                                           for other in others])
+
     def __isub__(self, other):
         self.trip_set()
         if not isinstance(other, (set, frozenset)):
@@ -780,11 +787,14 @@ class SetField(MultiField):
             self.value -= other
         self.value -= frozenset([self._element_to_field(element) \
                                      for element in other])
+
     def symmetric_difference_update(self, *others):
         self.trip_set()
-        self.value.symmetric_difference_update([[self._element_to_field(element) \
-                                                     for element in other] \
-                                                    for other in others])
+        self.value.symmetric_difference_update(
+            [[self._element_to_field(element) \
+                  for element in other] \
+                 for other in others])
+
     def __ixor__(self, other):
         self.trip_set()
         if not isinstance(other, (set, frozenset)):
@@ -792,18 +802,23 @@ class SetField(MultiField):
             self.value ^= other
         self.value ^= frozenset([self._element_to_field(element) \
                                      for element in other])
+
     def add(self, elem):
         self.trip_set()
         self.value.add(self._element_to_field(elem))
+
     def remove(self, elem):
         self.trip_set()
         self.value.remove(elem)
+
     def discard(self, elem):
         self.trip_set()
         self.value.discard(elem)
+
     def pop(self, elem):
         self.trip_set()
         return self.value.pop()
+
     def clear(self):
         self.trip_set()
         return self.value.clear()
@@ -816,6 +831,7 @@ class SetField(MultiField):
         return self.value - other
     def __xor__(self, other):
         return self.value ^ other
+
     def copy(self):
         return frozenset() + self.value
 
@@ -833,23 +849,22 @@ class Foreign(Field):
     reload the field, use field.forget() to forget the cached value.
     """
 
-    def __init__(self, foreign_class, local_key, foreign_key, name=None,
-                 virtual=False):
+    def __init__(self, foreign_class, local_field, foreign_field, key=None,
+                 name=None):
         self.foreign_class = foreign_class
         """The class for object(s) to which this foreign field points."""
 
-        self.foreign_key = foreign_key
+        self.foreign_field = foreign_field
         """The key in the foreign class to which this field refers."""
 
-        self.local_key = local_key
+        self.local_field = local_field
         """The key in the local class referring to the foreign object(s)."""
 
-        self.virtual = False
-        """Whether or not this field has a corresponding path.
+        self.key = key
+        """A key for this relationship.
 
-        Virtual fields are queried by adding additional constraints to
-        a general query for the foreign objects, rather than on a
-        keyed path.  For some backends there will be no difference.
+        If key is None (the default), then this foreign relationship
+        is virtual and will be constructed through a query.
         """
 
         super(Foreign, self).__init__(name=name, modifiable=False)
@@ -910,12 +925,16 @@ class Foreign(Field):
     def __str__(self):
         return self._name
     def __lt__(self, other):
-        return self.__class__ < other.__class__ if self.__class__ is not other.__class__ \
-            else self.foreign_class < other.foreign_class if self.foreign_class is not other.foreign_class \
+        return self.__class__ < other.__class__ \
+                if self.__class__ is not other.__class__ \
+            else self.foreign_class < other.foreign_class \
+                if self.foreign_class is not other.foreign_class \
             else self.name < other.name
     def __le__(self, other):
-        return self.__class__ <= other.__class__ if self.__class__ is not other.__class__ \
-            else self.foreign_class <= other.foreign_class if self.foreign_class is not other.foreign_class \
+        return self.__class__ <= other.__class__ \
+                if self.__class__ is not other.__class__ \
+            else self.foreign_class <= other.foreign_class \
+                if self.foreign_class is not other.foreign_class \
             else self.name <= other.name
     def __eq__(self, other):
         return False if self.__class__ is not other.__class__ \
@@ -944,7 +963,9 @@ class Foreign(Field):
                 if self.foreign_class is not other.foreign_class \
             else cmp(self.name, other.name)
     def __hash__(self):
-        return hash(hash(self.__class__) + hash(self.foreign_class) + hash(self.name))
+        return hash(hash(self.__class__)
+                    + hash(self.foreign_class)
+                    + hash(self.name))
     def __nonzero__(self):
         return False if self.has_value and self._value is None else True
 
@@ -953,15 +974,16 @@ class ForeignObject(Foreign):
     """A field to represent a foreign object."""
 
     def fetch_value(self):
-        if self.virtual:
+        if self.key is None:
             ret = instance.session.query(
-                path=self.foreign_class.coll_path,
-                query={'eq': [(self.foreign_key,),
-                              getattr(instance, self.local_key)]
+                cls=self.foreign_class,
+                query={'eq': [(self.foreign_field,),
+                              getattr(instance, self.local_field)]
                        })
         else:
             ret = instance.session.query(
-                path=(instance.path() + (self,)))
+                cls=self.foreign_class,
+                key=self.key)
         if ret:
             return ret[0]
         else:
@@ -975,15 +997,16 @@ class ForeignCollection(Foreign):
         # The import dragons will keep you from doing something more
         # obvious.
         from . import schema
-        local_key = getattr(self.instance, self.local_key)
-        if self.virtual:
+        local_field = getattr(self.instance, self.local_field)
+        if self.key is None:
             return schema.SchemaCollection(
+                cls=self.foreign_class,
                 session=instance.session,
-                path=self.foreign_class.coll_path,
-                sticky={'eq': [(self.foreign_key,), local_key]},
-                autoset={self.foreign_key : local_key})
+                sticky={'eq': [(self.foreign_field,), local_field]},
+                autoset={self.foreign_field : local_field})
         else:
             return schema.SchemaCollection(
+                cls=self.foreign_class,
                 session=instance.session,
-                path=(instance.path() + (self,)),
-                autoset={self.foreign_key : local_key})
+                key=self.key,
+                autoset={self.foreign_field : local_field})
