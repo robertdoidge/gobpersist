@@ -1,4 +1,6 @@
 from __future__ import absolute_import
+import itertools
+
 from .. import session
 from .. import exception
 
@@ -43,25 +45,37 @@ class Cache(session.Backend):
                     if len(res) == 0:
                         self.cache.commit(collection_additions=[path])
                     else:
-                        self.cache.commit(additions=res)
+                        self.cache.commit(additions=[{'gob': item} \
+                                                         for item in res])
                     return res
 
     def commit(self, additions=[], updates=[], removals=[],
                collection_additions=[], collection_removals=[]):
         gob_invalidate = []
-        collection_invalidate = set(collection_additions, collection_removals)
+        collection_invalidate = set(collection_additions)
+        collection_invalidate.update(collection_removals)
         for op in itertools.chain(additions, updates, removals):
+            remove_unique_keys = []
+            if 'remove_unique_keys' in op:
+                remove_unique_keys.append(op['remove_unique_keys'])
+            if 'add_unique_keys' in op:
+                remove_unique_keys.append(op['add_unique_keys'])
             new_op = {
                 'gob': op['gob'],
-                'remove_unique_keys': op['remove_unique_keys'] + op['add_unique_keys']
+                'remove_unique_keys': remove_unique_keys
                 }
             gob_invalidate.append(new_op)
-            for path in itertools.chain(op['gob'].keys,
-                                        op['add_keys'],
-                                        op['remove_keys']):
+            add_keys = op['gob'].keys
+            if 'add_keys' in op:
+                add_keys = itertools.chain(add_keys, op['add_keys'])
+            if 'remove_keys' in op:
+                add_keys = itertools.chain(add_keys, op['remove_keys'])
+
+            for path in add_keys:
                 collection_invalidate.add(path)
 
-        self.backend.commit(additions, updates, removals,
+        ret = self.backend.commit(additions, updates, removals,
                             collection_additions, collection_removals)
         self.cache.commit(removals=gob_invalidate,
                           collection_removals=collection_invalidate)
+        return ret

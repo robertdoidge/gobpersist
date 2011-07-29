@@ -21,6 +21,7 @@ class GobTranslator(object):
     def query_to_myquery(self, cls, query):
         """Transform a query into a query that is more palatable to the
         backend."""
+        print repr(query)
         ret = {}
         for key, value in query.iteritems():
             if key in ('eq', 'ne', 'gt', 'lt', 'gte', 'lte'):
@@ -30,7 +31,8 @@ class GobTranslator(object):
                 for item in value:
                     if isinstance(item, tuple):
                         # identifier
-                        identifier, f = self.idnt_to_myidnt(item, cls)
+                        identifier = self.idnt_to_myidnt(cls, item)
+                        f = self.field_for_idnt(cls, item)
                         newvalue.append(identifier)
                     elif isinstance(item, dict):
                         # quantifier
@@ -43,7 +45,7 @@ class GobTranslator(object):
                             raise exception.QueryError("Invalid key '%s'" \
                                                            " in quantifier" \
                                                            % k)
-                        identifier = self.idnt_to_myidnt(item, cls)
+                        identifier = self.idnt_to_myidnt(cls, item)
                         f = self.field_for_idnt(cls, item)
                         newquant[k] = identifier
                         newvalue.append(identifier)
@@ -182,13 +184,13 @@ class GobTranslator(object):
                                      % (repr(pathelem), repr(idnt)))
             if not isinstance(pathelem, field.Field):
                 pathelem = getattr(cls, pathelem)
-            retfield = pathelem
-            ret += pathelem.name
+            ret.append(pathelem.name)
             if isinstance(pathelem, field.Foreign):
                 cls = pathelem.foreign_class
             else:
                 # This should be the last element
                 cls = None
+        print repr(ret)
         return tuple(ret)
 
 
@@ -344,6 +346,7 @@ class Session(GobTranslator):
                 ret.append(
                     self.collections[gob.collection_name][gob.primary_key])
             else:
+                gob.session = self
                 self.collections[gob.collection_name][gob.primary_key] = gob
                 ret.append(gob)
         return ret
@@ -416,20 +419,19 @@ class Session(GobTranslator):
                         op['conditions'] = {'and': []}
                     op['conditions']['and'].append(
                         {'eq': [(f.name,), f]})
+            removals.append(op)
 
         collection_additions = self.operations['collection_additions']
         collection_removals = self.operations['collection_removals']
 
-        for gob in self.backend.commit(additions=additions,
-                                       removals=removals,
-                                       updates=updates,
-                                       collection_additions=collection_additions,
-                                       collection_removals=collection_removals):
+        for (gob, newgob) in self.backend.commit(
+                additions=additions,
+                removals=removals,
+                updates=updates,
+                collection_additions=collection_additions,
+                collection_removals=collection_removals):
             # gob.mark_persisted()
-            if gob.primary_key in self.collections[gob.collection_name]:
-                self._update_object(
-                    self.collections[gob.collection_name][gob.primary_key],
-                    gob)
+            self._update_object(gob, newgob, force=True)
 
         for operation in self.operations.itervalues():
             for gob in operation:
@@ -493,7 +495,7 @@ class Session(GobTranslator):
 
         Returns and iterable containing the data.
         """
-        gob2, iterable = self.do_download(self.gob_to_pgob(gob))
+        gob2, iterable = self.storage_engine.download(gob)
         self._update_object(gob, gob2, True)
         return iterable
 

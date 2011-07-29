@@ -1,14 +1,15 @@
 from __future__ import absolute_import
-from . import gobkvquerent
-from .. import exception
-from .. import session
-
-import pylibmc
 import time
 import cPickle as pickle
 import datetime
 import itertools
-import field
+
+import pylibmc
+
+from . import gobkvquerent
+from .. import exception
+from .. import session
+from .. import field
 
 class PickleWrapper(object):
     loads = pickle.loads
@@ -73,7 +74,8 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         if path_range is not None:
             raise exception.UnsupportedError("path_range is not supported by" \
                                                  " memcached")
-        return self.do_kv_query(self.path_to_mypath(path), self.cls_for_path(path))
+        return self.do_kv_query(self.path_to_mypath(path),
+                                self.cls_for_path(path))
 
 
     def acquire_locks(self, locks):
