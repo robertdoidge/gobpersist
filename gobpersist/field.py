@@ -521,6 +521,8 @@ class IntegerField(NumericField):
 
     def validate(self, value):
         super(IntegerField, self).validate(value)
+        if value is None:
+            return
         if not isinstance(value, (int,long)):
             raise TypeError("'%s' object is not integral, as required by" \
                                 " field '%s'" % (type(value), self._name))
