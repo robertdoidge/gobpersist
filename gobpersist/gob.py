@@ -133,6 +133,16 @@ class Gob(object):
                 if value.primary_key:
                     self.__dict__['primary_key'] = value
 
+        # make foreign fields refer to local fields
+        for key in dir(self.__class__):
+            value = getattr(self.__class__, key)
+            if isinstance(value, field.Foreign):
+                value.key = tuple([
+                        self.__dict__[keyelem.instance_key] \
+                                    if isinstance(keyelem, field.Field) \
+                                else keyelem \
+                            for keyelem in value.key])
+
         # make indices refer to local fields
         self.keys \
             = [tuple([self.__dict__[keyelem.instance_key] \
@@ -263,12 +273,12 @@ class Gob(object):
                                                             else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
                                                                 if isinstance(keyelem, field.Field)
                                                         else repr(keyelem)
-                                                        for keyelem in path]) \
-                                        for path in self.keys]),
+                                                        for keyelem in key]) \
+                                        for key in self.keys]),
                        "unique_keys=[%s]" \
                        % ', '.join(["(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
                                                             else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
                                                                 if isinstance(keyelem, field.Field) \
                                                             else repr(keyelem) \
-                                                            for keyelem in path]) \
-                                        for path in self.unique_keys])])))
+                                                            for keyelem in key]) \
+                                        for key in self.unique_keys])])))

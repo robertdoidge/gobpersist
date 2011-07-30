@@ -45,6 +45,32 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
 
         super(MemcachedBackend, self).__init__()
 
+    def do_kv_multi_query(self, cls, keys):
+        keys = [str(".".join(key)) for key in keys]
+        res = self.mc.get_multi(keys)
+        ret = []
+        for key in keys:
+            if key not in res:
+                raise exception.NotFound(
+                    "Could not find value for key %s" \
+                        % key)
+            store = self.serializer.loads(res[key])
+            if isinstance(store, (list, tuple)):
+                # Collection or reference?
+                if len(store) == 0:
+                    # Empty collection
+                    ret.append(store)
+                elif isinstance(store[0], (list, tuple)):
+                    # Collection
+                    ret.append(self.do_kv_multi_query(cls, store))
+                else:
+                    # Reference
+                    ret.append(self.do_kv_query(cls, store)[0])
+            else:
+                # Object
+                ret.append(self.mygob_to_gob(cls, store))
+        return ret
+
     def do_kv_query(self, cls, key):
         res = self.mc.get(str(".".join(key)))
         if res == None:
@@ -59,10 +85,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                 return store
             elif isinstance(store[0], (list, tuple)):
                 # Collection
-                ret = []
-                for key in store:
-                    ret.append(self.do_kv_query(cls, key)[0])
-                return ret
+                return self.do_kv_multi_query(cls, store)
             else:
                 # Reference
                 return self.do_kv_query(cls, store)
@@ -293,29 +316,29 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                                                in itertools.chain(
                                                    collection_add,
                                                    collection_remove)])
+            for key in c_addsrms:
+                c_addsrms[key] \
+                    = set([tuple(path)
+                           for path in self.serializer.loads(c_addsrms[key])])
             print repr(c_addsrms)
-            set_multi = {}
             for c_add in collection_add:
                 key = '.'.join(c_add[0])
-                res = c_addsrms[key] if key in c_addsrms else None
-                if res is None:
-                    set_multi[key] = self.serializer.dumps([c_add[1]])
+                if key in c_addsrms:
+                    res = c_addsrms[key]
                 else:
-                    res = set([tuple(path) \
-                                   for path in self.serializer.loads(res)])
-                    res.add(c_add[1])
-                    set_multi[key] = self.serializer.dumps(list(res))
+                    res = c_addsrms[key] = set()
+                res.add(c_add[1])
+            for c_rm in collection_remove:
+                key = '.'.join(c_add[0])
+                if key in c_addsrms:
+                    res = c_addsrms[key]
+                    res.discard(c_rm[1])
+            set_multi = {}
+            for k, v in c_addsrms.iteritems():
+                set_multi[k] = self.serializer.dumps(list(v))
             for setting in to_set:
                 set_multi['.'.join(setting[0])] \
                     = self.serializer.dumps(setting[1])
-            for c_rm in collection_remove:
-                key = '.'.join(c_rm[0])
-                res = c_addsrms[key] if key in c_addsrms else None
-                if res is not None:
-                    res = set([tuple(path) \
-                                   for path in self.serializer.loads(res)])
-                    res.discard(c_rm[1])
-                    set_multi[key] = self.serializer.dumps(list(res))
             self.mc.set_multi(set_multi, self.expiry)
             self.mc.delete_multi(['.'.join(delete) for delete in to_delete])
         finally:
