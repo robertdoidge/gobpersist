@@ -218,6 +218,8 @@ class BooleanField(Field):
 
     def validate(self, value):
         super(BooleanField, self).validate(value)
+        if value is None:
+            return
         if not isinstance(value, bool):
             raise TypeError("'%s' object is not a bool, but field '%s' requires"
                             " a bool" % (type(value), self._name))
@@ -233,6 +235,8 @@ class DateTimeField(Field):
 
     def validate(self, value):
         super(DateTimeField, self).validate(value)
+        if value is None:
+            return
         if isinstance(value, (unicode, str)):
             if iso8601.ISO8601_RE.match(value) is None:
                 raise ValueError("'%s' does not appear to be an ISO 8601" \
@@ -561,6 +565,8 @@ class RealField(NumericField):
 
     def validate(self, value):
         super(RealField, self).validate(value)
+        if value is None:
+            return
         if not isinstance(value, float):
             raise TypeError("'%s' object is not float, as required by field" \
                                 " '%s'" % (type(value), self._name))
@@ -576,6 +582,8 @@ class EnumField(StringField):
 
     def validate(self, value):
         super(EnumField, self).validate(value)
+        if value is None:
+            return
         if value not in self.choices:
             raise ValueError("'%s' not in choices for field '%s': %s" \
                                  % (value, self._name, self.choices.join(", ")))
