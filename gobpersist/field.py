@@ -133,6 +133,8 @@ class Field(object):
 
     def set(self, value):
         """Set this field to a specific value."""
+        while isinstance(value, Field):
+            value = value.value
         self.validate(value)
         self.trip_set()
         self._set(value)
