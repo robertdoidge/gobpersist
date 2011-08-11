@@ -333,8 +333,8 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
             for k, v in c_addsrms.iteritems():
                 set_multi.append((k, self.serializer.dumps(list(v))))
             for setting in to_set:
-                set_multi.append('.'.join(setting[0]),
-                                 self.serializer.dumps(setting[1]))
+                set_multi.append(('.'.join(setting[0]),
+                                  self.serializer.dumps(setting[1])))
             self.tyrant.misc("putlist", 0, [item for tuple_ in set_multi for item in tuple_])
             self.tyrant.misc("outlist", 0, ['.'.join(delete) for delete in to_delete])
         finally:

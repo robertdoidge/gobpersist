@@ -352,8 +352,8 @@ class Session(GobTranslator):
             # gob.mark_persisted()
             self._update_object(gob, newgob, force=True)
 
-        for operation in self.operations.itervalues():
-            for gob in operation:
+        for operation in ('additions', 'removals', 'updates'):
+            for gob in self.operations[operation]:
                 gob.mark_persisted()
         if len(self.paused_transactions) > 0:
             self.operations = self.paused_transactions.pop()

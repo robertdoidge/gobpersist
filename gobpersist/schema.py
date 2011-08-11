@@ -131,6 +131,18 @@ class SchemaCollection(object):
         gob.remove()
 
 
+    def initialize_db(self):
+        """Put the minimum requisite entries in the database such that
+        the semantics of the schema function properly.
+
+        Note that schema initialization is still rather dumb.  This
+        will just overwrite anything that's in the database, so only
+        use it for true initialization."""
+        self.session.add_collection(self.key)
+        self.cls.initialize_db(self.session)
+        self.session.commit()
+
+
 class Schema(object):
     """Convenience class to hold a schema.
 
@@ -156,3 +168,15 @@ class Schema(object):
     def collection_for_key(self, key):
         """Create a collection that corresponds to a given key."""
         return SchemaCollection(self.session, key)
+
+    def initialize_db(self):
+        """Put the minimum requisite entries in the database such that
+        the semantics of the schema function properly.
+
+        Note that schema initialization is still rather dumb.  This
+        will just overwrite anything that's in the database, so only
+        use it for true initialization."""
+        for name in dir(self):
+            collection = getattr(self, name)
+            if isinstance(collection, SchemaCollection):
+                collection.initialize_db()
