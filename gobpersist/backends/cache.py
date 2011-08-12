@@ -40,8 +40,6 @@ class Cache(session.Backend):
                 else:
                     res = self.backend.query(cls, path, path_range, query,
                                              retrieve, order, offset, limit)
-                    print "OK, got result, now saving it in cache..."
-                    print "iterating over items..."
                     if len(res) == 0:
                         self.cache.commit(collection_additions=[path])
                     else:

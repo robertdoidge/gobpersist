@@ -301,10 +301,10 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                         continue
 
             # Conditions pass! Actually perform the actions
-            print "to_set:", to_set, "to_add:", to_add, \
-                "to_delete:", to_delete, "collection_add:", collection_add, \
-                "collection_remove:", collection_remove, \
-                "locks:", locks, "conditions:", conditions
+            # print "to_set:", to_set, "to_add:", to_add, \
+            #     "to_delete:", to_delete, "collection_add:", collection_add, \
+            #     "collection_remove:", collection_remove, \
+            #     "locks:", locks, "conditions:", conditions
 
             add_multi = {}
             for add in to_add:
@@ -320,7 +320,6 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                 c_addsrms[key] \
                     = set([tuple(path)
                            for path in self.serializer.loads(c_addsrms[key])])
-            print repr(c_addsrms)
             for c_add in collection_add:
                 key = '.'.join(c_add[0])
                 if key in c_addsrms:

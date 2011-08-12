@@ -45,7 +45,12 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
 
     def do_kv_multi_query(self, cls, keys):
         keys = [str(".".join(key)) for key in keys]
-        res = self.tyrant.mget(keys)
+        try:
+            res = self.tyrant.mget(keys)
+        except TyrantError:
+            raise exception.NotFound(
+                "Could not find value for key %s" \
+                    % ".".join(key))
         keys = set(keys)
         ret = []
         for key, value in res:
@@ -72,7 +77,12 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
         return ret
 
     def do_kv_query(self, cls, key):
-        res = self.tyrant.get(str(".".join(key)))
+        try:
+            res = self.tyrant.get(str(".".join(key)))
+        except TyrantError:
+            raise exception.NotFound(
+                "Could not find value for key %s" \
+                    % ".".join(key))
         if res == None:
             raise exception.NotFound(
                 "Could not find value for key %s" \
@@ -296,10 +306,10 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
                                    repr(alteration['gob'].obj_key)))
 
             # Conditions pass! Actually perform the actions
-            print "to_set:", to_set, "to_add:", to_add, \
-                "to_delete:", to_delete, "collection_add:", collection_add, \
-                "collection_remove:", collection_remove, \
-                "locks:", locks, "conditions:", conditions
+            # print "to_set:", to_set, "to_add:", to_add, \
+            #     "to_delete:", to_delete, "collection_add:", collection_add, \
+            #     "collection_remove:", collection_remove, \
+            #     "locks:", locks, "conditions:", conditions
 
             add_multi = []
             for add in to_add:
@@ -316,7 +326,6 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
                 c_addsrms[key] \
                     = set([tuple(path)
                            for path in self.serializer.loads(value)])
-            print repr(c_addsrms)
             for c_add in collection_add:
                 key = '.'.join(c_add[0])
                 if key in c_addsrms:

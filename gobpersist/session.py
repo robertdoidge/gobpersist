@@ -20,7 +20,6 @@ class GobTranslator(object):
     def query_to_myquery(self, cls, query):
         """Transform a query into a query that is more palatable to the
         backend."""
-        print repr(query)
         ret = {}
         for key, value in query.iteritems():
             if key in ('eq', 'ne', 'gt', 'lt', 'gte', 'lte'):
@@ -125,7 +124,6 @@ class GobTranslator(object):
             else:
                 # This should be the last element
                 cls = None
-        print repr(ret)
         return tuple(ret)
 
     def field_for_idnt(self, cls, idnt):
