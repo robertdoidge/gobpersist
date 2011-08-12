@@ -136,7 +136,7 @@ class Gob(object):
         # make foreign fields refer to local fields
         for key in dir(self.__class__):
             value = getattr(self.__class__, key)
-            if isinstance(value, field.Foreign):
+            if isinstance(value, field.Foreign) and value.key is not None:
                 value.key = tuple([
                         self.__dict__[keyelem.instance_key] \
                                     if isinstance(keyelem, field.Field) \
@@ -257,26 +257,6 @@ class Gob(object):
             if isinstance(value, field.Field):
                 value.mark_persisted()
 
-
-    @classmethod
-    def initialize_db(cls, session):
-        """Put the minimum requisite entries in the database such that
-        the semantics of the schema function properly.
-
-        Note that schema initialization is still rather dumb.  This
-        will just overwrite anything that's in the database, so only
-        use it for true initialization."""
-        keys = cls.keys[:]
-        keys = set(keys)
-        keys.add(cls.coll_key)
-        for key in keys:
-            simple = True
-            for entry in keys:
-                if isinstance(entry, field.Field):
-                    simple = False
-                    break
-            if simple:
-                session.add_collection(key)
 
     def __repr__(self):
         # Because Python should be lisp?  I dunno...
