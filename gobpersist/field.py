@@ -694,7 +694,7 @@ class ListField(MultiField):
         if other <= 0:
             self.value = []
         else:
-            currentvalue = base_clone(value)
+            currentvalue = base_clone(self.value)
             for dummy in xrange(1, other):
                 self.extend(currentvalue)
 
@@ -706,7 +706,7 @@ class ListField(MultiField):
         self.trip_set()
         self.value.sort(*args, **kwargs)
 
-    def extend(elems):
+    def extend(self, elems):
         self.trip_set()
         self.value.extend([self._element_to_field(element) \
                                for element in elems])
