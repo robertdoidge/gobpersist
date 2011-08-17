@@ -404,7 +404,7 @@ class Session(GobTranslator):
         Returns nothing, but sets the fields on the object if they are
         updated.
         """
-        gob2 = self.storage_engine.upload_iter(gob, fp)
+        gob2 = self.storage_engine.upload_iter(gob, iterable)
         self._update_object(gob, gob2, True)
 
     def download(self, gob):
@@ -463,7 +463,7 @@ class Backend(GobTranslator):
 class StorageEngine(GobTranslator):
     """Abstract class for storage engines."""
 
-    def upload(gob, fp):
+    def upload(self, gob, fp):
         """Storage engines should provide this method.
 
         TODO: Provide a default version that wraps the file in an
@@ -476,7 +476,7 @@ class StorageEngine(GobTranslator):
                                       " implement upload" \
                                       % self.__class__.__name__)
 
-    def download(gob, fp):
+    def download(self, gob):
         """Storage engines should provide this method.
 
         Should return a tuple of the updated gob and an iterable
@@ -487,7 +487,7 @@ class StorageEngine(GobTranslator):
                                       % self.__class__.__name__)
 
 
-    def upload_iter(gob, iterable):
+    def upload_iter(self, gob, iterable):
         """Storage engines should provide this method.
 
         Should return a gob representing the new / changed object.
@@ -505,4 +505,4 @@ class StorageEngine(GobTranslator):
                 ret = readstr[:size]
                 readstr = readstr[size:]
                 return ret
-        return upload(gob, filewrapper())
+        return self.upload(gob, filewrapper())

@@ -13,6 +13,8 @@ import iso8601
 import uuid
 
 import gserialize
+import hashlib
+import operator
 
 from gobpersist import gob
 from gobpersist import field
@@ -22,6 +24,8 @@ from gobpersist import storage
 from gobpersist.backends import memcached
 from gobpersist.backends import gobkvquerent
 from gobpersist.backends import cache
+
+sys.setrecursionlimit(4000)
 
 def get_gob_class():
     class GobTest(gob.Gob):
@@ -120,7 +124,6 @@ class TestWithGob(TestWithSchema):
         self.gob.uuid_field = str(uuid.uuid4())
         self.gob.primary_key = self.gob_key
         self.gob.parent_key = None
-
         self.gob2 = self.sc_class.gobtests(self.sc)
         self.gob2.boolean_field.set(True)
         self.gob2.datetime_field = datetime.datetime.utcnow()
@@ -129,7 +132,7 @@ class TestWithGob(TestWithSchema):
         self.gob2.real_field = 12345.5
         self.gob2.enum_field= 'test2'
         self.gob2.primary_key = self.gob2_key
-    
+
     def test_keyset(self):
         keys = self.gob.keyset()
         print '\ntest_keyset '
@@ -156,7 +159,8 @@ class TestWithGob(TestWithSchema):
         self.gob.save()
         self.sc.commit()
         self.sc.gobtests.list(name='gob')
-        self.gob2.remove()
+        self.sc.gobtests.list(integer_field=('eq', 25))
+        self.gob.remove()
         self.sc.commit()
         print '\n'
 
@@ -184,7 +188,9 @@ class TestWithGob(TestWithSchema):
         self.gob.prepare_add()
 
     def test_prepare_update(self):
+        print '\nmaintest_prepare_update'
         self.gob.prepare_update()
+        print '\n'
 
     def test_revert(self):
         print '\nmaintest_revert'
@@ -193,7 +199,9 @@ class TestWithGob(TestWithSchema):
         print '\n'
 
     def test_markpersisted(self):
+        print '\nmaintest_mark_persisted'
         self.gob.mark_persisted()
+        print '\n'
 
     def test__repr__(self):
         print '\nsession.Session.__repr__'
@@ -207,7 +215,7 @@ class TestWithGob(TestWithSchema):
     def test_collection_for_a_key(self):
         print '\nSchema.collection_for_a_key'
         schema_coll_key = str(uuid.uuid4())
-        schema_coll = self.sc.collection_for_key(schema_coll_key)
+        schema_coll = self.sc.collection_for_key(get_gob_class(), ('gobtests', schema_coll_key))
         print schema_coll
         print '\n'
 
@@ -223,7 +231,7 @@ class TestWithGob(TestWithSchema):
         self.gob2.save()
         self.sc.commit()
         print '\nsession.GobTranslator.query_to_myquery'
-        print self.sc.query_to_myquery(field.IntegerField(), {'integer_field':('eq', 30), 'integer_field':('eq', 15)} )
+        print self.sc.query_to_myquery(field.IntegerField(), {'eq':{'integer_field': 30, 'string_field': 'example_string'}} )
         print '\n'
         self.gob2.remove()
         self.sc.commit()
@@ -242,11 +250,13 @@ class TestWithGob(TestWithSchema):
         print '\n'
 
     def test_query(self):
+        self.gob.save()
         self.gob2.save()
         self.sc.commit()
         print '\nsession.GobTranslator.query'
-        print self.sc.query(query=('eq', 30))
+        print self.sc.query(self.sc_class.gobtests, key=('gobtests',  self.gob_key), query={'eq':{'string_field': 'example_string'}})
         print '\n'
+        self.gob.remove()
         self.gob2.remove()
         self.sc.commit()
 
@@ -275,10 +285,14 @@ class TestWithGob(TestWithSchema):
         print '\n'
 
     def test_kvquery(self):
+        self.gob.save()
+        self.sc.commit()
         print '\nbackends.memcached.test_kvquery'
         key = ('gobtests', self.gob_key)
         self.sc.session.backend.kv_query(self.sc_class.gobtests, key=key)
         print '\n'
+        self.gob.remove()
+        self.sc.commit()
 
     def test_acquire_and_release_locks(self):
         print '\nbackends.memcached.aquire_locks, release_locks'
@@ -317,30 +331,22 @@ class TestWithGob(TestWithSchema):
         new_sc_class = get_gob_schema()
         new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
         print '\ntest_applyoperator_gobkv'
-        print new_sc.session.backend._apply_operator(self.gob, 'eq', self.gob.integer_field, self.gob2.integer_field) 
+        print new_sc.session.backend._apply_operator(self.gob, operator.eq, self.gob.integer_field, self.gob2.integer_field) 
         print '\n'
         
     def test_executequery_gobkv(self):
         new_sc_class = get_gob_schema()
         new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
         print '\ntest_executequery_gobkv'
-        print new_sc.session.backend._execute_query(self.gob,{'eq': 30, 'ne': 'garbage string'} )
+        print new_sc.session.backend._execute_query(self.gob,{'eq': {'integer_field': 30, 'integer_field': 25}} )
         print '\n'
 
     def test_query_gobkv(self):
         new_sc_class = get_gob_schema()
         new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
         print '\ntest_query_gobkv'
-        print new_sc.session.backend.query(new_sc.gobtests, query={'eq': 30})
+        self.assertRaises(AttributeError, new_sc.session.backend.query, new_sc.gobtests, query={'eq': 30})
         print '\n'
-
-#gobpersist/backends/cache.py
-#not sure if we can test this yet
-    def test_query_cache(self):
-        new_sc_class = get_gob_schema()
-        new_sc = new_sc_class(session=session.Session(backend=cache.Cache()))
-        print '\ntest_query_cache'
-        print new_sc.session.backend.query(new_sc.gobtests, query={'eq': 30})
 
 class FieldGroup(object):
     def __init__(self):
@@ -440,16 +446,21 @@ class FieldWorkout(unittest.TestCase):
         self.assertEqual(self.tstfields.integer_field, new_field) 
 
     def test_set__(self):
+        self.tstfields.integer_field.instance_key = 'integer_field'
         self.tstfields.integer_field.set(1234)
-        self.tstfields.integer_field.__set__(self.tstfields.integer_field, 5678)
+        self.tstfields.integer_field.__set__(self.tstfields, 5678)
 
     def test_get__(self):
+        self.tstfields.integer_field.instance_key = 'value'
         self.tstfields.integer_field.set(5678)
         self.tstfields.integer_field.__get__(self.tstfields.integer_field, self.tstfields)
 
     def test_delete__(self):
-        self.tstfields.integer_field.set(1234)
-        self.tstfields.__delete__(self.tstfields.integer_field)
+        inst_key = str(uuid.uuid4())
+        self.tstfields.integer_field.instance = field.IntegerField()
+        self.tstfields.integer_field.instance.null = True
+        self.tstfields.integer_field.instance_key = 'instance'
+        self.tstfields.integer_field.__delete__(self.tstfields.integer_field)
 
 class BooleanFieldWorkout(unittest.TestCase):
     def setUp(self):
@@ -530,9 +541,6 @@ class StringFieldWorkout(unittest.TestCase):
         self.value_decoded = None
         self.string_field.set('unicode string')
         self.string_field.__unicode__()
-
-    def test_decode(self):
-        pass
         
 class IntegerFieldWorkout(unittest.TestCase):
     def setUp(self):
@@ -600,7 +608,6 @@ class UUIDFieldWorkout(unittest.TestCase):
         test_uuid =str(uuid.uuid4())
         self.uuid_field.set(test_uuid)
         self.assertRaises(ValueError, self.uuid_field.set, 'randomstring')
-        self.assertRaises(ValueError, self.uuid_field.set, uuid.uuid4())
 
 class MultiFieldWorkout(unittest.TestCase):
 
@@ -667,7 +674,7 @@ class ListFieldWorkout(unittest.TestCase):
         self.list_field.__iadd__(int_list2)
 
     def test_imul(self):
-        self.list_field.set(self.int_list)
+        self.list_field.value = self.int_list
         self.list_field.__imul__(3)
 
     def test_reverse(self):
@@ -738,7 +745,7 @@ class ListFieldWorkout(unittest.TestCase):
         reversed_list = []
         iterator_obj = self.list_field.__reversed__()
         for i in iterator_obj:
-            reversed_list.add(i)
+            reversed_list.append(i)
         self.assertEqual(reversed_list, list(reversed(self.list_field.value)))
 
 class ForeignWorkout(unittest.TestCase):
@@ -768,19 +775,18 @@ class ForeignWorkout(unittest.TestCase):
     def test_fetchvalue(self):
         self.new_field.fetch_value()
 
-class ForeignObjectWorkout(unittest.TestCase):
-    def setUp(self):
-        pass
-
-    def test_fetchvalue(self):
-        pass
-
 def init_memcached():
     return memcached.MemcachedBackend(expiry=60, serializer=gserialize.JSONSerializer())
 
 class SizeFileWorkout(unittest.TestCase):
+    def get_sizestore(self):   
+
+        class SizableStorable(storage.Storable):
+            size = 180
+        return SizableStorable
+
     def setUp(self):
-        self.new_file = schema.File()
+        self.new_file = self.get_sizestore()
     
     def test_read(self):
         disk_file = open('sample.txt', 'r')
@@ -788,8 +794,14 @@ class SizeFileWorkout(unittest.TestCase):
         file_like.read(4)
 
 class LimitedFileWorkout(unittest.TestCase):
+    def get_sizestore(self):   
+
+        class SizableStorable(storage.Storable):
+            size = 180
+        return SizableStorable
+
     def setUp(self):
-        self.new_file = schema.File()
+        self.new_file = self.get_sizestore()
 
     def test_read(self):
         disk_file = open('sample.txt', 'r')
@@ -797,49 +809,70 @@ class LimitedFileWorkout(unittest.TestCase):
         file_like.read(5)
 
 class StorableWorkout(unittest.TestCase):
+    def get_storable(self, session):
+        class NewMD5Storable(storage.MD5Storable):
+            session = None
+            size = 18
+            def __init__(self, instance):
+                self.session = instance
+            
+        return NewMD5Storable(session)
+
     def setUp(self):
-        self.new_file = schema.File()
+        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
+
         self.fp = open('sample.txt', 'r')
-
-    def test_fileops(self):
-        self.new_file.upload(self.fp)
-        self.new_file.upload_iter(self.fp)
-
-class MD5Workout(unittest.TestCase):
-    def setUp(self):
-        self.md5_obj = hashlib.md5()
-        fp = open('sample.txt', 'r')
-        self.new_md5file = storage.MD5File(self.md5_obj, fp)
+        self.new_file = self.get_storable(self.new_session)
 
     def test_read(self):
-        self.new_md5file.read(3)
+        file_like = storage.SizeFile(self.new_file, self.fp)
+        file_like.read(5)
+
+    def test_fileops(self):
+        self.assertRaises(NotImplementedError, self.new_file.upload, self.fp)
+        self.assertRaises(NotImplementedError, self.new_file.upload_iter, self.fp)
 
 class MD5StorableWorkout(unittest.TestCase):
+    
+    def get_storable(self, session):
+        class NewMD5Storable(storage.MD5Storable):
+            session = None
+            def __init__(self, instance):
+                self.session = instance
+            
+        return NewMD5Storable(session)
+
     def setUp(self):
+        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
+
         self.fp = open('sample.txt', 'r')
-        self.md5_storable = storage.MD5Storable()
+        self.md5_storable = self.get_storable(self.new_session)
 
     def test_upload(self):
-        self.md5_storable.upload(self.fp)
+        self.assertRaises(NotImplementedError, self.md5_storable.upload, self.fp)
 
     def test_uploaditer(self):
-        self.md5_storable.upload_iter(self.fp)
+        self.assertRaises(NotImplementedError, self.md5_storable.upload_iter, self.fp)
 
     def test_download(self):
-        self.md5_storable.download()
-class SessionWorkout(unittest.TestCase):
-    class GobTest(gob.Gob):
-        boolean_field = field.BooleanField()
-        string_field = field.StringField()
-        integer_field = field.IntegerField()
-        timestamp_field = field.TimestampField(unique=True)
+        self.assertRaises(NotImplementedError, self.md5_storable.download)
 
-        boolean_field.set(True)
-        string_field.set("outtacontrol")
-        integer_field.set(1234)
+class SessionWorkout(unittest.TestCase):
+    def get_gob(self):    
+        class GobTest(gob.Gob):
+            boolean_field = field.BooleanField()
+            string_field = field.StringField()
+            integer_field = field.IntegerField()
+            timestamp_field = field.TimestampField(unique=True)
+    
+            boolean_field.set(True)
+            string_field.set("outtacontrol")
+            integer_field.set(1234)
+
+        return GobTest()
 
     def setUp(self):
-        self.new_gob = self.GobTest
+        self.new_gob = self.get_gob()
         self.gob_testkey = str(uuid.uuid4())
         self.new_gob.primary_key = self.gob_testkey
         self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
@@ -878,9 +911,6 @@ class SessionWorkout(unittest.TestCase):
         popped_path = self.new_session.operations['collection_removals'].pop()
         self.assertEqual(popped_path, new_path)
 
-    def test_query(self):
-        pass
-
     def test_updateobject(self):
         cmp_gob = self.new_gob
         cmp_gob.integer_field = 5678
@@ -915,25 +945,19 @@ class SessionWorkout(unittest.TestCase):
 
     def test_upload(self):
         fp = open('sample.txt', 'r')
-        self.new_session.upload(self.new_gob, fp)
+        self.assertRaises(NotImplementedError, self.new_session.upload, self.new_gob, fp)
     
     def test_uploaditer(self):
         fp = open('sample.txt', 'r')
-        self.new_session.upload_iter(self.new_gob, fp)
+        self.assertRaises(NotImplementedError, self.new_session.upload_iter, self.new_gob, fp)
     
     def test_download(self):
         print'\nSessionWorkout.test_download'
-        print self.new_session.download(self.new_gob)
+        self.assertRaises(NotImplementedError, self.new_session.download, self.new_gob)
         print '\n'
         
 class BackendWorkout(unittest.TestCase):
-    def setUp(self):
-        self.new_backend = session.Backend()
-
-    def test_commit(self):
-        self.new_backend.commit()
-
-class StorageEngineWorkout(unittest.TestCase):
+    
     class GobTest(gob.Gob):
         boolean_field = field.BooleanField()
         string_field = field.StringField()
@@ -946,19 +970,12 @@ class StorageEngineWorkout(unittest.TestCase):
 
     def setUp(self):
         self.new_gob = self.GobTest
-        self.new_storage = session.StorageEngine()
-        self.fp = open('sample.txt', 'r')
-        
-    def test_upload(self):
-        self.new_storage.upload(self.new_gob, self.fp)
+        self.gob_testkey = str(uuid.uuid4())
+        self.new_gob.primary_key = self.gob_testkey
+        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
 
-    def test_download(self):
-        self.new_storage.download(self.new_gob, self.fp)
+    def test_commit(self):
+        self.new_session.backend.commit()
 
-    def test_uploaditer(self):
-        self.fps = [self.fp, self.fp, self.fp]
-        self.new_storage.download(self.new_gob, self.fps)
-
-    
 if __name__ == '__main__':
     unittest.main()
