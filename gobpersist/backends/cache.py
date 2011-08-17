@@ -25,23 +25,23 @@ class Cache(session.Backend):
         """The backend which is to operate as a cache."""
 
 
-    def query(self, cls, path=None, path_range=None, query=None, retrieve=None,
+    def query(self, cls, key=None, key_range=None, query=None, retrieve=None,
               order=None, offset=None, limit=None):
         while True:
             try:
-                return self.cache.query(cls, path, path_range, query,
+                return self.cache.query(cls, key, key_range, query,
                                         retrieve, order, offset, limit)
             except exception.NotFound:
                 # couldn't find it in cache
                 cache_refill = getattr(self.backend, 'cache_refill', None)
                 if cache_refill is not None:
-                    cache_refill(self.cache, path, path_range, query,
+                    cache_refill(self.cache, key, key_range, query,
                                  retrieve, order, offset, limit)
                 else:
-                    res = self.backend.query(cls, path, path_range, query,
+                    res = self.backend.query(cls, key, key_range, query,
                                              retrieve, order, offset, limit)
                     if len(res) == 0:
-                        self.cache.commit(collection_additions=[path])
+                        self.cache.commit(collection_additions=[key])
                     else:
                         self.cache.commit(additions=[{'gob': item} \
                                                          for item in res])
@@ -69,8 +69,8 @@ class Cache(session.Backend):
             if 'remove_keys' in op:
                 add_keys = itertools.chain(add_keys, op['remove_keys'])
 
-            for path in add_keys:
-                collection_invalidate.add(path)
+            for key in add_keys:
+                collection_invalidate.add(key)
 
         ret = self.backend.commit(additions, updates, removals,
                                   collection_additions, collection_removals)
