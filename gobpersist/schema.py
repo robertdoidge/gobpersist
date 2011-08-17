@@ -165,9 +165,9 @@ class Schema(object):
     def __getattr__(self, name):
         return getattr(self.session, name)
 
-    def collection_for_key(self, key):
+    def collection_for_key(self, cls, key):
         """Create a collection that corresponds to a given key."""
-        return SchemaCollection(self.session, key)
+        return SchemaCollection(cls=cls, session=self.session, key=key)
 
     def initialize_db(self):
         """Put the minimum requisite entries in the database such that

@@ -1,8 +1,10 @@
 from __future__ import absolute_import
-from .. import session
-from .. import gob
 
 import operator
+import functools
+
+from .. import session
+from .. import gob
 
 class GobKVQuerent(session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
@@ -118,13 +120,32 @@ class GobKVQuerent(session.Backend):
                     if self._execute_query(gob, subquery):
                         return False
         return True
-
+        
 
     def query(self, cls, key=None, key_range=None, query=None, retrieve=None,
               order=None, offset=None, limit=None):
         res = self.kv_query(cls, key, key_range)
         ret = []
         current = -1
+        if order is not None:
+            def order_cmp(a, b):
+                for ordering in order:
+                    if not isinstance(ordering, dict) or not len(ordering) == 1:
+                        raise ValueError("Invalid ordering: %s" % repr(ordering))
+                    key, ordering = ordering.items()[0]
+                    if isinstance(ordering, field.Field):
+                        ordering = ordering._name
+                    res = cmp(self._get_value(a, (ordering,)), self._get_value(b, (ordering,)))
+                    if res == 0:
+                        continue
+                    if key == 'asc':
+                        return res
+                    elif key == 'desc':
+                        return -res
+                    else:
+                        raise ValueError("Invalid key '%s' in ordering %s" \
+                                             % (key, repr(ordering)))
+            res.sort(key=functools.cmp_to_key(order_cmp))
         for item in res:
             if query is not None and not self._execute_query(item, query):
                 continue
