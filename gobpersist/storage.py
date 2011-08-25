@@ -20,14 +20,16 @@ class LimitedFile(object):
 
     def __init__(self, storable, fp):
         self.fp = fp
-        self.remaining = storable.size
+        self.remaining = storable.size.value
     def read(self, size):
+        print "Remaining: %i\nRequested: %i" % (self.remaining, size)
         if not self.remaining:
             return ""
         if size >= self.remaining:
             ret = self.fp.read(self.remaining)
         else:
             ret = self.fp.read(size)
+        print "Read: %i" % (len(ret),)
         self.remaining -= len(ret)
         return ret
 
