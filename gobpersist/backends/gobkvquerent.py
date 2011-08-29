@@ -5,6 +5,7 @@ import functools
 
 from .. import session
 from .. import gob
+from .. import exception
 
 class GobKVQuerent(session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
@@ -18,7 +19,7 @@ class GobKVQuerent(session.Backend):
             value = gob
             for pathelem in arg:
                 if not isinstance(value, gob.Gob):
-                    raise ValueError("Could not understand identifier %s" \
+                    raise exception.QueryError("Could not understand identifier %s" \
                                          % repr(arg))
                 if not isinstance(pathelem, field.Field):
                     pathelem = getattr(value, pathelem)
@@ -27,7 +28,7 @@ class GobKVQuerent(session.Backend):
                 else:
                     value = pathelem
             if isinstance(value, gob.Gob):
-                raise ValueError("Could not understand identifier %s" \
+                raise exception.QueryError("Could not understand identifier %s" \
                                      % repr(arg))
             elif isinstance(value, schema.SchemaCollection):
                 return value.list()
@@ -45,7 +46,7 @@ class GobKVQuerent(session.Backend):
         #                                              repr(arg2))
         if isinstance(arg1, dict):
             if len(arg1) > 1:
-                raise ValueError("Too many keys in quantifier")
+                raise exception.QueryError("Too many keys in quantifier")
             k, v = arg1.items()[0]
             v = self.get_value(gob, v)
             if k == 'any':
@@ -64,10 +65,10 @@ class GobKVQuerent(session.Backend):
                         return False
                 return True
             else:
-                raise ValueError("Invalid key '%s' in quantifier" % k)
+                raise exception.QueryError("Invalid key '%s' in quantifier" % k)
         elif isinstance(arg2, dict):
             if len(arg2) > 1:
-                raise ValueError("Too many keys in quantifier")
+                raise exception.QueryError("Too many keys in quantifier")
             k, v = arg2.items()[0]
             v = self.get_value(gob, v)
             if k == 'any':
@@ -86,7 +87,7 @@ class GobKVQuerent(session.Backend):
                         return False
                 return True
             else:
-                raise ValueError("Invalid key '%s' in quantifier" % k)
+                raise exception.QueryError("Invalid key '%s' in quantifier" % k)
         else:
             return op(arg1, arg2)
 
@@ -119,6 +120,8 @@ class GobKVQuerent(session.Backend):
                 for subquery in args:
                     if self._execute_query(gob, subquery):
                         return False
+            else:
+                raise exception.QueryError("Unknown query element %s" % repr(cmd))
         return True
         
 

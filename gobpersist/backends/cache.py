@@ -4,9 +4,9 @@ import itertools
 from .. import session
 from .. import exception
 
-class Cache(session.Backend):
-    """A generic cache class, using one backend for cache and one for
-    nonvolatile storage.
+class CachingBackend(session.Backend):
+    """A generic caching back end, using any cache backend and any
+    backend for nonvolatile storage.
 
     By default this class will manage cache misses by simply passing
     the request on to the back end and storing the retrieved value in
@@ -39,41 +39,52 @@ class Cache(session.Backend):
                                  retrieve, order, offset, limit)
                 else:
                     res = self.backend.query(cls, key, key_range, query,
-                                             retrieve, order, offset, limit)
-                    if len(res) == 0:
-                        self.cache.commit(collection_additions=[key])
-                    else:
-                        self.cache.commit(additions=[{'gob': item} \
-                                                         for item in res])
-                    return res
+                                             retrieve, order, offset,
+                                             limit)
+                    self.cache.cache_query(cls, res, key, key_range, query,
+                                           retrieve, order, offset,
+                                           limit)
+                    # return res
 
     def commit(self, additions=[], updates=[], removals=[],
                collection_additions=[], collection_removals=[]):
         gob_invalidate = []
-        collection_invalidate = set(collection_additions)
-        collection_invalidate.update(collection_removals)
+        key_invalidate = set(collection_additions)
+        key_invalidate.update(collection_removals)
         for op in itertools.chain(additions, updates, removals):
-            remove_unique_keys = []
             if 'remove_unique_keys' in op:
-                remove_unique_keys.append(op['remove_unique_keys'])
+                key_invalidate.update(op['remove_unique_keys'])
             if 'add_unique_keys' in op:
-                remove_unique_keys.append(op['add_unique_keys'])
-            new_op = {
-                'gob': op['gob'],
-                'remove_unique_keys': remove_unique_keys
-                }
-            gob_invalidate.append(new_op)
-            add_keys = op['gob'].keyset()
+                key_invalidate.update(op['add_unique_keys'])
             if 'add_keys' in op:
-                add_keys = itertools.chain(add_keys, op['add_keys'])
+                key_invalidate.update(op['add_keys'])
             if 'remove_keys' in op:
-                add_keys = itertools.chain(add_keys, op['remove_keys'])
-
-            for key in add_keys:
-                collection_invalidate.add(key)
+                key_invalidate.update(op['remove_keys'])
+            gob_invalidate.append(op['gob'])
 
         ret = self.backend.commit(additions, updates, removals,
-                                  collection_additions, collection_removals)
-        self.cache.commit(removals=gob_invalidate,
-                          collection_removals=collection_invalidate)
+                                  collection_additions,
+                                  collection_removals)
+        self.cache.invalidate(gob_invalidate, key_invalidate)
         return ret
+
+
+class Cache(session.GobTranslator):
+    """Abstract superclass for cache implementations."""
+
+    def query(self, cls, key=None, key_range=None, query=None, retrieve=None,
+              order=None, offset=None, limit=None):
+        """Query the cache."""
+        raise NotImplementedError("Cache type '%s' does not implement" \
+                                      " query" % self.__class__.__name__)
+
+    def cache_query(self, cls, items, key=None, key_range=None, query=None,
+                    retrieve=None, order=None, offset=None, limit=None):
+        """Store the results of a query in the cache."""
+        raise NotImplementedError("Cache type '%s' does not implement" \
+                                      " cache_query" % self.__class__.__name__)
+
+    def invalidate(self, items=None, keys=None):
+        """Invalidate all queries pertaining to these objects."""
+        raise NotImplementedError("Cache type '%s' does not implement" \
+                                      " invalidate" % self.__class__.__name__)

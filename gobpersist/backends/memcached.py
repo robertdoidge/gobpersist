@@ -7,6 +7,7 @@ import itertools
 import pylibmc
 
 from . import gobkvquerent
+from . import cache
 from .. import exception
 from .. import session
 from .. import field
@@ -99,38 +100,37 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
                                                  " memcached")
         return self.do_kv_query(cls, self.key_to_mykey(key))
 
+    def try_acquire_locks(self, locks):
+        """Tries to acquire the locks.
+        
+        Returns true if successful, false otherwise."""
+        locks_acquired = []
+        for lock in locks:
+            # Lock the object
+            if self.mc.add(lock, '1'):
+                locks_acquired.append(lock)
+            else:
+                # The object is locked!
+                # Back out all acquired locks
+                self.release_locks(locks_acquired)
+                return False
+        return True
+
     def acquire_locks(self, locks):
         """Atomically acquires a set of locks."""
-        # Can I just say how much simpler and clearer this method
-        # would be with a goto command?  The ideological prejudice
-        # against this sort of thing has really gone far enough.
-
         tries = 8
         # After this many tries, we forcibly acquire the locks
 
         sleep_time = 0.25
         # Time to sleep between tries
 
-        locks_acquired = []
         while tries > 0:
-            for lock in locks:
-                # Lock the object
-                if self.mc.add(lock, '1'):
-                    locks_acquired.append(lock)
-                else:
-                    # The object is locked!
-                    # Back out all acquired locks and start over
-                    self.release_locks(locks_acquired)
-                    locks_acquired = []
-                    break
+            if self.try_acquire_locks(locks):
+                return locks
             else:
-                # No break means we acquired all the locks
-                # "else" is a poor choice of nomenclature here...
-                return locks_acquired
-
-            # We failed to acquire all the locks; loop and try again
-            tries -= 1
-            time.sleep(sleep_time)
+                # We failed to acquire all the locks; loop and try again
+                tries -= 1
+                time.sleep(sleep_time)
 
         # We failed to acquire locks after *tries* attempts.  Say a
         # hail mary and force acquire.
@@ -138,7 +138,7 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             # Hail Mary!
             # Lock the object
             self.mc.set(lock, 'locked')
-            locks_acquired.append(lock)
+        return locks
 
     def release_locks(self, locks):
         """Releases a set of locks."""
@@ -345,3 +345,298 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             self.release_locks(locks)
         # memcached never changes items on update
         return []
+
+
+class MemcachedCache(MemcachedBackend, cache.Cache):
+    """A cache backend based on Memcached."""
+    def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
+                 serializer=PickleWrapper, lock_prefix='_lock',
+                 *args, **kwargs):
+        MemcachedBackend.__init__(self, servers, expiry, binary,
+                                  serializer, lock_prefix,
+                                  *args, **kwargs)
+
+    def query(self, cls, key=None, key_range=None, query=None, retrieve=None,
+              order=None, offset=None, limit=None):
+        # go from least to most limited.
+        base_key = key
+        if key_range is not None:
+            if key is not None:
+                raise ValueError("Both key and key_range specified")
+            base_key = self._key_range_to_key(key_range)
+        try:
+            return super(MemcachedCache, self).query(
+                cls=cls,
+                key=base_key,
+                query=query,
+                retrieve=retrieve,
+                order=order,
+                offset=offset,
+                limit=limit)
+        except exception.NotFound:
+            pass
+        # didn't find a general query; is there a more specific query?
+        # Order is significant...
+        if query is not None:
+            base_key = self._query_to_key(base_key, query)
+            try:
+                return super(MemcachedCache, self).query(
+                    cls=cls,
+                    key=base_key,
+                    retrieve=retrieve,
+                    order=order,
+                    offset=offset,
+                    limit=limit)
+            except exception.NotFound:
+                pass
+        if retrieve is not None:
+            base_key = self._retrieve_to_key(base_key, retrieve)
+            try:
+                return super(MemcachedCache, self).query(
+                    cls=cls,
+                    key=base_key,
+                    order=order,
+                    offset=offset,
+                    limit=limit)
+            except exception.NotFound:
+                pass
+        if offset is not None or limit is not None:
+            base_key = self._offlim_to_key(base_key, offset, limit)
+            return super(MemcachedCache, self).query(
+                cls=cls,
+                key=base_key,
+                order=order)
+        raise exception.NotFound(
+            "Could not find value for key %s" \
+                % ".".join(self.key_to_mykey(base_key)))
+
+
+    def cache_query(self, cls, items, key=None, key_range=None, query=None,
+                    retrieve=None, order=None, offset=None, limit=None):
+        base_key = key
+        # Order is significant...
+        if key_range is not None:
+            if key is not None:
+                raise ValueError("Both key and key_range specified")
+            base_key = self._key_range_to_key(key_range)
+        if query is not None:
+            base_key = self._query_to_key(base_key, query)
+        if retrieve is not None:
+            base_key = self._retrieve_to_key(base_key, retrieve)
+        if offset is not None or limit is not None:
+            base_key = self._offlim_to_key(base_key, offset, limit)
+
+        # base_key is now properly structured
+
+        # we add the following entries:
+        # 1. Each entry is added as the result of base_key
+        # 2. All unique keys for this object are added
+        # 3. Base_key is added to (_INTEGRITY_, key) for each key
+
+        base_key = self.key_to_mykey(base_key)
+        base_coll = []
+        to_set = {}
+        integrity_add = []
+        locks = set()
+        locks.add(self.lock_prefix + '.' + '.'.join(base_key))
+        for gob in items:
+            gob_key = self.key_to_mykey(gob.obj_key)
+            to_set['.'.join(gob_key)] \
+                = self.serializer.dumps(self.gob_to_mygob(gob))
+            if gob_key == base_key:
+                # this was a query on a primary key
+                break
+            locks.add(self.lock_prefix + '.' + '.'.join(gob_key))
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    gob.unique_keyset()):
+                locks.add(self.lock_prefix + '.' + '.'.join(key))
+                to_set['.'.join(key)] = self.serializer.dumps(gob_key)
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    gob.keyset()):
+                key = ('_INTEGRITY_',) + key
+                locks.add(self.lock_prefix + '.' + '.'.join(key))
+                integrity_add.append((key, base_key))
+            base_coll.append(gob_key)
+        else:
+            # not a query on a primary key
+            to_set['.'.join(base_key)] = self.serializer.dumps(base_coll)
+
+        self.acquire_locks(locks)
+        try:
+            if integrity_add:
+                c_adds = self.mc.get_multi(['.'.join(c_add[0]) \
+                                                for c_add \
+                                                in integrity_add])
+                for key in c_adds:
+                    c_adds[key] \
+                        = set([tuple(path)
+                               for path in self.serializer.loads(c_adds[key])])
+                for c_add in integrity_add:
+                    key = '.'.join(c_add[0])
+                    if key in c_adds:
+                        res = c_adds[key]
+                    else:
+                        res = c_adds[key] = set()
+                    res.add(c_add[1])
+                integrity_set = {}
+                for k,v in c_adds.iteritems():
+                    integrity_set[k] = self.serializer.dumps(list(v))
+                self.mc.set_multi(to_set, self.expiry)
+                if self.expiry > 0:
+                    self.mc.set_multi(integrity_set, self.expiry + 10)
+                else:
+                    self.mc.set_multi(integrity_set, self.expiry)
+            else:
+                self.mc.set_multi(to_set, self.expiry)
+        finally:
+            self.release_locks(locks)
+
+
+    def invalidate(self, items=None, keys=None):
+        # remove all keys.
+        # remove all keys referenced by integrity keys.
+        # remove all integrity keys.
+        keyset = set()
+        integrity_keyset = set()
+        if items is not None:
+            for gob in items:
+                keyset.add('.'.join(self.key_to_mykey(gob.obj_key)))
+                for key in itertools.imap(
+                        self.key_to_mykey,
+                        gob.unique_keyset()):
+                    keyset.add('.'.join(key))
+                for key in itertools.imap(
+                        self.key_to_mykey,
+                        gob.keyset()):
+                    keyset.add('.'.join(key))
+                    integrity_keyset.add('.'.join(('_INTEGRITY_',) + key))
+        if keys is not None:
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    keys):
+                keyset.add('.'.join(key))
+                integrity_keyset.add('.'.join(('_INTEGRITY_',) + key))
+
+        tries = 8
+        sleep_time = 0.25
+
+        first_locks = set([self.lock_prefix + '.' + key \
+                               for key in itertools.chain(keyset,
+                                                          integrity_keyset)])
+        while tries > 0:
+            self.acquire_locks(first_locks)
+            try:
+                integrity_dict = self.mc.get_multi(integrity_keyset)
+                keyset_extra = set()
+                for v in integrity_dict.itervalues():
+                    key_list = self.serializer.loads(v)
+                    for key in key_list:
+                        keyset_extra.add(str('.'.join(key)))
+                second_locks = set([self.lock_prefix + '.' + key \
+                                        for key in keyset_extra]) \
+                               - first_locks
+                if not self.try_acquire_locks(second_locks):
+                    self.release_locks(first_locks)
+                    tries -= 1
+                    time.sleep(sleep_time)
+                    continue
+                else:
+                    # successfully acquired all locks
+                    break
+            except:
+                self.release_locks(first_locks)
+                raise
+        else:
+            # we ran out of tries; say a hail mary and force the
+            # acquisition
+            self.acquire_locks(first_locks)
+            try:
+                integrity_dict = self.mc.get_multi(integrity_keyset)
+                keyset_extra = set()
+                for v in integrity_dict.itervalues():
+                    key_list = self.serializer.loads(v)
+                    for key in key_list:
+                        keyset_extra.add(str('.'.join(key)))
+                second_locks = set([self.lock_prefix + '.' + key \
+                                        for key in keyset_extra]) \
+                               - first_locks
+                self.acquire_locks(second_locks)
+            except:
+                self.release_locks(first_locks)
+                raise
+        try:
+            self.mc.delete_multi(list(keyset | keyset_extra | integrity_keyset))
+        finally:
+            self.release_locks(first_locks | second_locks)
+
+    def _key_range_to_key(self, key_range):
+        return key_range[0] + ('-',) + key_range[1]
+
+    def _serialize_term(self, term):
+        if isinstance(term, dict):
+            # Quantifier
+            if len(term) > 1:
+                raise exception.QueryError("Too many keys in quantifier")
+            k, v = term.items()[0]
+            v = _serialize_term(v)
+            return ['_' + k + '_'] + v
+        else:
+            # Identifier
+            return ['('] + term + [')']
+
+    def _serialize_query(self, query):
+        ret = []
+        for cmd, args in query:
+            if len(args) == 0:
+                continue
+            if cmd in ('gt', 'ge', 'lt', 'le', 'eq', 'ne'):
+                if len(args) < 2:
+                    continue
+                for term in args[:-1]:
+                    ret.extend(self._serialize_term(term))
+                    ret.append('_' + cmd + '_')
+                ret.extend(self._serialize_term(args[-1]))
+            elif cmd in ('and', 'or'):
+                if len(args) == 1:
+                    ret.append(self._serialize_query(args[0]))
+                else:
+                    for subquery in args[:-1]:
+                        ret.append('(')
+                        ret.extend(self._serialize_query(subquery))
+                        ret.append(')')
+                        ret.append('_' + cmd + '_')
+                    ret.append('(')
+                    ret.extend(self._serialize_query(args[-1]))
+                    ret.append(')')
+            elif cmd in ('nor', 'not'):
+                if len(args) == 1:
+                    ret.append('_not_')
+                    ret.append('(')
+                    ret.extend(self._serialize_query(args[0]))
+                    ret.append(')')
+                else:
+                    for subquery in args[:-1]:
+                        ret.append('(')
+                        ret.extend(self._serialize_query(subquery))
+                        ret.append(')')
+                        ret.append('_nor_')
+                    ret.append('(')
+                    ret.extend(self._serialize_query(args[-1]))
+                    ret.append(')')
+            else:
+                raise exception.QueryError("Unknown query element %s" % repr(cmd))
+        return tuple(ret)
+
+    def _query_to_key(self, key, query):
+        return key + ('_WHERE_',) + self._serialize_query(query)
+
+    def _retrieve_to_key(self, key, retrieve):
+        return key + ('_RETRIEVE_',) + retrieve
+
+    def _offlim_to_key(key, offset, limit):
+        return key + ('_OFFSET_',) \
+            + ('_NULL_',) if offset is None else (offset,) \
+            + ('_LIMIT_',) \
+            + ('_NULL_',) if limit is None else (limit,)
