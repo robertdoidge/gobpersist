@@ -17,9 +17,6 @@ import uuid
 
 class Partition(object):
     """region on disk to store files"""
-
-    partremsize = 0
-    
     
     def __init__(self, path='/home/admin/accellion_filestore', capacity=2000):
 
@@ -133,10 +130,11 @@ class Partition(object):
 
     def write_disk(self, identifier, fp):
         """writes a file to disk, returns 1 if everything went good"""
+        fp.seek(0)
         path = self.generate_file_handle(identifier)
         fp_to_disk = open(path, 'wb')
         tempstr = ""
-
+        
         tempstr = fp.read(4096)
         while tempstr != "":
             fp_to_disk.write(tempstr)
@@ -177,6 +175,7 @@ class MRUPreserve(Partition):
         """determines if we need to make space for new cache items"""
         #check size of file
         #if incoming size is greater than available space
+        del_list = []
         if file_size >= self.partremsize:
         #start kickin out old data
             print self.sizeregistry
@@ -184,27 +183,42 @@ class MRUPreserve(Partition):
                 print self.partremsize
                 currentid = self.recordregistry[ -1 ]
                 self.remove(currentid)
+                del_list.append(currentid)
+        return del_list
             
     def add(self, identifier, fp):
         """perform storage of file to disk"""
         #performs same function as add in Partition class, but
         #    actively removes files if filesize > space remaining
-        fp.seek(0)
+        
+        del_list= [] #assess_removals() returns id's of cleared files, pretty important
+
         file_size = os.fstat(fp.fileno())[6]
         self.sizeregistry[identifier] = file_size
         if file_size >= self.partsize:
             print 'File ' + identifier + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
             return -1
         if file_size >= self.partremsize:
-            self.assess_removals(identifier, file_size)
+            del_list = self.assess_removals(identifier, file_size)
         if self.search(identifier) > -1:
             self.update(identifer, fp)
-            return 0
+            return del_list
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
         self.recordregistry.insert(0, identifier)
         print 'inserting ' + identifier
         print 'File ' + identifier + ' successfully stored.'
-        return 0
+        return del_list
 
-            
+    def update(self, identifier, fp):
+        """replace file data of stored file with new file data"""
+        #unique to this method, returns a tuple of 0 return value and deleted objects
+        del_list = []
+        if self.search(identifier) is not -1:    
+            self.remove(identifier)
+            del_list = self.add(identifier, fp)
+            print 'File ' + identifier + ' successfully updated.'
+            return 0, del_list
+        print 'Could not find file ' + identifier + '.'
+        return -1, None
+

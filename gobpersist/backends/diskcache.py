@@ -8,7 +8,7 @@ import os,sys
 import pyrant
 import uuid
 
-import cPickle as pickle
+import jsonpickle
 
 # diskcache.py
 # utilizes pyrant, tokyotyrant, tokyocabinet, and minifs.py to
@@ -19,10 +19,20 @@ KEYFIELD = 'file_id'
 
 class TokyoDiskStore(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
-    def __init__(self, server='127.0.0.1', port=1978, permpath='/home/admin/accellion_filestore', cachepath='/home/admin/accellion_cache', permsize=5000, cachesize=2000):
+    def __init__(self, server='127.0.0.1', port=1978, permpath='/home/admin/accellion_filestore', cachepath='/home/admin/accellion_cache', permsize=5000, cachesize=2000, oldconfig=False):
 
         self.tt = pyrant.Tyrant(server, port)
         """tokyo cabinet client"""
+
+        self.filerecord = []
+        self.sizerecord = {}
+
+        if oldconfig == True:
+            try:
+                self.filerecord = jsonpickle.decode(self.tt['filerec'])
+                self.sizerecord = jsonpickle.decode(self.tt['sizerec'])
+            except KeyError:
+                print 'bummer'
 
         self.filestore_directory = permpath
         self.filecache_directory = cachepath
@@ -36,18 +46,38 @@ class TokyoDiskStore(session.StorageEngine):
         self.cache_storage = minifs.MRUPreserve(self.filecache_directory, cachesize)
         """temporary and permanent disk storage"""
 
+        if self.filerecord is not -1:
+            self.perm_storage.recordregistry = self.filerecord
+            self.perm_storage.sizeregistry = self.sizerecord
+
+    def key_removal(self, del_list):
+        for key in del_list:
+            del self.tt[key]
+
+    def store_permanent_records(self):
+        """in case of a system halt, recall saved file information"""
+        self.tt['filerec'] = jsonpickle.encode(self.perm_storage.recordregistry)
+        self.tt['sizerec'] = jsonpickle.encode(self.perm_storage.sizeregistry)
+
     def upload(self, gob, fp):
         """call on the storage to upload data"""
         searchrslt = self.search(gob)
         if searchrslt == 0:
-            searchrslt = self.cache_storage.update(getattr(gob, KEYFIELD).value, fp)
+            searchrslt, del_list = self.cache_storage.update(getattr(gob, KEYFIELD).value, fp)
+            if del_list is not None:
+                self.key_removal(del_list)
             if searchrslt == -1:
-                searchrslt = self.perm_storage.get(getattr(gob, KEYFIELD).value, fp)
-                self.cache_storage.add(getattr(gob, KEYFIELD).value, fp)
+                searchrslt = self.perm_storage.get(getattr(gob, KEYFIELD).value)
+                self.key_removal(self.cache_storage.add(getattr(gob, KEYFIELD).value, fp))
+                self.tt[getattr(gob, KEYFIELD).value] = getattr(gob, KEYFIELD).value
+                self.store_permanent_records()
                 return gob
-        self.perm_storage.add(getattr(gob, KEYFIELD).value, fp)
-        if searchrslt == 0:
+            del self.tt[getattr(gob, KEYFIELD).value] 
             self.tt[getattr(gob, KEYFIELD).value] = getattr(gob, KEYFIELD).value
+        rslt = self.perm_storage.add(getattr(gob, KEYFIELD).value, fp)
+        if rslt != -1: self.key_removal(self.cache_storage.add(getattr(gob, KEYFIELD).value, fp))
+        self.tt[getattr(gob, KEYFIELD).value] = getattr(gob, KEYFIELD).value
+        self.store_permanent_records()
         return gob
             
     def download(self, gob):
@@ -57,9 +87,11 @@ class TokyoDiskStore(session.StorageEngine):
         if searchrslt == 0:
             fp = self.cache_storage.get(getattr(gob, KEYFIELD).value)
             if fp != -1:
+                self.store_permanent_records()
                 return (gob, fp)
             fp = self.perm_storage.get(getattr(gob, KEYFIELD).value)
-            self.cache_storage.add(getattr(gob, KEYFIELD).value, fp)
+            self.key_removal(self.cache_storage.add(getattr(gob, KEYFIELD).value, fp))
+            self.store_permanent_records()
             return (gob, fp)
         return -1
     
@@ -72,8 +104,10 @@ class TokyoDiskStore(session.StorageEngine):
             if searchrslt != -1:
                 self.cache_storage.remove(getattr(gob, KEYFIELD).value)
                 self.perm_storage.remove(getattr(gob, KEYFIELD).value)
+                self.store_permanent_records()
                 return 0
             self.perm_storage.remove(getattr(gob, KEYFIELD).value)
+            self.store_permanent_records()
             return 0
         return -1     
 
@@ -81,6 +115,7 @@ class TokyoDiskStore(session.StorageEngine):
         """search tokyocabinet for a gob's file handle"""
         try:
             fileid = self.tt[getattr(gob, KEYFIELD).value]
+            print 'found it!!!'
             return 0
         except KeyError:
             return -1
