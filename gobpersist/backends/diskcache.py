@@ -1,7 +1,6 @@
 from __future__ import absolute_import
 
 from accellion import minifs
-from gobpersist import field
 from gobpersist import session
 
 import os,sys
@@ -19,21 +18,30 @@ KEYFIELD = 'file_id'
 
 class TokyoDiskStore(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
-    def __init__(self, server='127.0.0.1', port=1978, permpath='/home/admin/accellion_filestore', cachepath='/home/admin/accellion_cache', permsize=5000, cachesize=2000, oldconfig=False):
+    def __init__(self, server='127.0.0.1', port=1978, permpath='/home/admin/accellion_filestore', cachepath='/home/admin/accellion_cache', permsize=5000, cachesize=2000, oldconfig=True):
 
         self.tt = pyrant.Tyrant(server, port)
         """tokyo cabinet client"""
 
         self.filerecord = []
         self.sizerecord = {}
+        self.filerecord_cache = []
+        self.sizerecord_cache = {}
+        self.storage_spaceleft = 0
+        self.cache_spaceleft = 0
 
         if oldconfig == True:
             try:
                 self.filerecord = jsonpickle.decode(self.tt['filerec'])
                 self.sizerecord = jsonpickle.decode(self.tt['sizerec'])
+                self.filerecord_cache = jsonpickle.decode(self.tt['filerec_cache'])
+                self.sizerecord_cache = jsonpickle.decode(self.tt['sizerec_cache'])
+                self.cache_spaceleft = jsonpickle.decode(self.tt['cachespace'])
+                self.storage_spaceleft = jsonpickle.decode(self.tt['storespace'])
             except KeyError:
-                print 'bummer'
-
+                print 'this is the first time setting up this storage engine.'
+                self.filerecord = -1
+                
         self.filestore_directory = permpath
         self.filecache_directory = cachepath
         """directories for storage"""
@@ -42,40 +50,43 @@ class TokyoDiskStore(session.StorageEngine):
         self.filecache_size = cachesize
         """sizes of storage containers"""
 
-        self.perm_storage = minifs.Partition(self.filestore_directory, permsize)
-        self.cache_storage = minifs.MRUPreserve(self.filecache_directory, cachesize)
+        self.perm_storage = minifs.Partition(self.filestore_directory, self.filestore_size)
+        self.cache_storage = minifs.MRUPreserve(self.filecache_directory, self.filecache_size)
         """temporary and permanent disk storage"""
-
-        if self.filerecord is not -1:
+        
+        
+        if self.filerecord != -1:
             self.perm_storage.recordregistry = self.filerecord
             self.perm_storage.sizeregistry = self.sizerecord
-
-    def key_removal(self, del_list):
-        for key in del_list:
-            del self.tt[key]
+            self.cache_storage.recordregistry = self.filerecord_cache
+            self.cache_storage.sizeregistry = self.sizerecord_cache
+            self.perm_storage.partremsize = self.storage_spaceleft
+            self.cache_storage.partremsize = self.cache_spaceleft
 
     def store_permanent_records(self):
         """in case of a system halt, recall saved file information"""
         self.tt['filerec'] = jsonpickle.encode(self.perm_storage.recordregistry)
         self.tt['sizerec'] = jsonpickle.encode(self.perm_storage.sizeregistry)
+        self.tt['filerec_cache'] = jsonpickle.encode(self.cache_storage.recordregistry)
+        self.tt['sizerec_cache'] = jsonpickle.encode(self.cache_storage.sizeregistry)
+        self.tt['cachespace'] = jsonpickle.encode(self.cache_storage.partremsize)
+        self.tt['storespace'] = jsonpickle.encode(self.perm_storage.partremsize)
 
     def upload(self, gob, fp):
         """call on the storage to upload data"""
-        searchrslt = self.search(gob)
-        if searchrslt == 0:
-            searchrslt, del_list = self.cache_storage.update(getattr(gob, KEYFIELD).value, fp)
-            if del_list is not None:
-                self.key_removal(del_list)
-            if searchrslt == -1:
-                searchrslt = self.perm_storage.get(getattr(gob, KEYFIELD).value)
-                self.key_removal(self.cache_storage.add(getattr(gob, KEYFIELD).value, fp))
+        rslt = self.search(gob) #temp variable to hold method results
+        if rslt == 0:
+            rslt = self.cache_storage.update(getattr(gob, KEYFIELD).value, fp)
+            if rslt == -1:
+                rslt = self.perm_storage.get(getattr(gob, KEYFIELD).value)
+                if rslt != -1: self.cache_storage.add(getattr(gob, KEYFIELD).value, fp)
                 self.tt[getattr(gob, KEYFIELD).value] = getattr(gob, KEYFIELD).value
                 self.store_permanent_records()
                 return gob
             del self.tt[getattr(gob, KEYFIELD).value] 
             self.tt[getattr(gob, KEYFIELD).value] = getattr(gob, KEYFIELD).value
         rslt = self.perm_storage.add(getattr(gob, KEYFIELD).value, fp)
-        if rslt != -1: self.key_removal(self.cache_storage.add(getattr(gob, KEYFIELD).value, fp))
+        if rslt != -1: self.cache_storage.add(getattr(gob, KEYFIELD).value, fp)
         self.tt[getattr(gob, KEYFIELD).value] = getattr(gob, KEYFIELD).value
         self.store_permanent_records()
         return gob
@@ -90,7 +101,7 @@ class TokyoDiskStore(session.StorageEngine):
                 self.store_permanent_records()
                 return (gob, fp)
             fp = self.perm_storage.get(getattr(gob, KEYFIELD).value)
-            self.key_removal(self.cache_storage.add(getattr(gob, KEYFIELD).value, fp))
+            self.cache_storage.add(getattr(gob, KEYFIELD).value, fp)
             self.store_permanent_records()
             return (gob, fp)
         return -1
@@ -115,7 +126,6 @@ class TokyoDiskStore(session.StorageEngine):
         """search tokyocabinet for a gob's file handle"""
         try:
             fileid = self.tt[getattr(gob, KEYFIELD).value]
-            print 'found it!!!'
             return 0
         except KeyError:
             return -1
