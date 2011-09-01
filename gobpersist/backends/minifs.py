@@ -49,17 +49,18 @@ class Partition(object):
         """returns index if record is in file system"""
         if identifier in self.recordregistry:
             recindx = self.recordregistry.index(identifier)
-            print 'Found record ' + identifier + ' at ' + str(recindx) + '.'
+            print 'Found record ' + identifier + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
             return recindx
         return -1
             
     def get(self, identifier):
         """returns python object file given file identifier"""
-        if self.search(identifier) > -1:
+        file_index = self.search(identifier)
+        if file_index > -1:
             path = self.generate_file_handle(identifier)
             fp = open(path, 'rb')
             return fp
-        print 'File not found.'
+        print 'File not found in ' + self.__class__.__name__
         return -1
 
     def add(self, identifier, fp):
@@ -167,7 +168,6 @@ class MRUPreserve(Partition):
         #if incoming size is greater than available space
         if file_size >= self.partremsize:
         #start kickin out old data
-            print self.sizeregistry
             while file_size >= self.partremsize:
                 currentid = self.recordregistry[ -1 ]
                 self.remove(currentid)
@@ -190,7 +190,7 @@ class MRUPreserve(Partition):
             return 0
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
-        self.recordregistry.insert(0, identifier)
+        self.pop_and_insert(identifier)
         print 'inserting ' + identifier
         print 'File ' + identifier + ' successfully stored.'
         return 0
@@ -206,3 +206,22 @@ class MRUPreserve(Partition):
         print 'Could not find file ' + identifier + '.'
         return -1
 
+    def get(self, identifier):
+        """returns python object file given file identifier"""
+        file_index = self.search(identifier)
+        if file_index > -1:
+            path = self.generate_file_handle(identifier)
+            fp = open(path, 'rb')
+            self.pop_and_insert(identifier)
+            return fp
+        print 'File not found in ' + self.__class__.__name__
+        return -1
+    
+    def pop_and_insert(self, identifier):
+        """helper method to reposition an element in a list"""
+        try:
+            self.recordregistry.pop(self.recordregistry.index(identifier))
+        except ValueError:
+            #That just means item hasn't been cached recently.  Continue insert!
+            pass
+        self.recordregistry.insert(0, identifier)

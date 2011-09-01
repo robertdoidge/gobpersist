@@ -52,8 +52,7 @@ class TokyoDiskStore(session.StorageEngine):
 
         self.perm_storage = minifs.Partition(self.filestore_directory, self.filestore_size)
         self.cache_storage = minifs.MRUPreserve(self.filecache_directory, self.filecache_size)
-        """temporary and permanent disk storage"""
-        
+        """temporary and permanent disk storage"""        
         
         if self.filerecord != -1:
             self.perm_storage.recordregistry = self.filerecord
