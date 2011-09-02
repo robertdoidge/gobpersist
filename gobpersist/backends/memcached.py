@@ -633,7 +633,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
         return key + ('_WHERE_',) + self._serialize_query(query)
 
     def _retrieve_to_key(self, key, retrieve):
-        return key + ('_RETRIEVE_',) + retrieve
+        return key + ('_RETRIEVE_',) + tuple(retrieve)
 
     def _offlim_to_key(key, offset, limit):
         return key + ('_OFFSET_',) \

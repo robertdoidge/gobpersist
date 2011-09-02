@@ -35,7 +35,7 @@ class CachingBackend(session.Backend):
                 # couldn't find it in cache
                 cache_refill = getattr(self.backend, 'cache_refill', None)
                 if cache_refill is not None:
-                    cache_refill(self.cache, key, key_range, query,
+                    cache_refill(self.cache, cls, key, key_range, query,
                                  retrieve, order, offset, limit)
                 else:
                     res = self.backend.query(cls, key, key_range, query,
