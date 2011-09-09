@@ -433,8 +433,9 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
         # 2. All unique keys for this object are added
         # 3. Base_key is added to (_INTEGRITY_, key) for each key
 
-        base_key = self.key_to_mykey(base_key)
-        base_coll = []
+        if base_key is not None:
+            base_key = self.key_to_mykey(base_key)
+            base_coll = []
         to_set = {}
         integrity_add = []
         locks = set()
@@ -443,9 +444,6 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
             gob_key = self.key_to_mykey(gob.obj_key)
             to_set['.'.join(gob_key)] \
                 = self.serializer.dumps(self.gob_to_mygob(gob))
-            if gob_key == base_key:
-                # this was a query on a primary key
-                break
             locks.add(self.lock_prefix + '.' + '.'.join(gob_key))
             for key in itertools.imap(
                     self.key_to_mykey,
@@ -458,9 +456,14 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                 key = ('_INTEGRITY_',) + key
                 locks.add(self.lock_prefix + '.' + '.'.join(key))
                 integrity_add.append((key, base_key))
-            base_coll.append(gob_key)
-        else:
-            # not a query on a primary key
+            if base_key is not None:
+                if gob_key == base_key:
+                    # this was a query on a primary key
+                    # ...or something is (and subsequently will be...) horribly wrong
+                    break
+                base_coll.append(gob_key)
+
+        if base_key is not None:
             to_set['.'.join(base_key)] = self.serializer.dumps(base_coll)
 
         self.acquire_locks(locks)
@@ -493,6 +496,9 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
         finally:
             self.release_locks(locks)
 
+
+    def cache_items(self, items):
+        self.cache_query(items=items)
 
     def invalidate(self, items=None, keys=None):
         # remove all keys.
