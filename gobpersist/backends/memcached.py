@@ -3,6 +3,8 @@ import time
 import cPickle as pickle
 import datetime
 import itertools
+import thread
+import contextlib
 
 import pylibmc
 
@@ -19,19 +21,59 @@ class PickleWrapper(object):
     def dumps(obj):
         return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
+class SimpleThreadMappedPool(object):
+    def __init__(self):
+        self.pool = {}
+
+    @contextlib.contextmanager
+    def reserve(self, *args, **kwargs):
+        thread_id = thread.get_ident()
+        if thread_id not in self.pool:
+            # create a new pylibmc Client
+            client_hash = self.pool[thread_id] = {}
+            client_hash['args'] = args
+            client_hash['kwargs'] = kwargs
+            client_hash['mc'] = pylibmc.Client(*args, **kwargs)
+            client_hash['time'] = time.time()
+            yield client_hash['mc']
+        else:
+            client_hash = self.pool[thread_id]
+            if client_hash['args'] != args or client_hash['kwargs'] != kwargs \
+                    or client_hash['time'] > time.time() + 60 * 3:
+                client_hash['mc'].disconnect_all()
+                client_hash['args'] = args
+                client_hash['kwargs'] = kwargs
+                client_hash['mc'] = pylibmc.Client(*args, **kwargs)
+                client_hash['time'] = time.time()
+                yield client_hash['mc']
+            else:
+                yield client_hash['mc']
+
+    def relinquish(self):
+        thread_id = thread.get_ident()
+        if thread_id in self.pool:
+            client_hash = self.pool[thread_id]
+            client_hash['mc'].disconnect_all()
+            del self.pool[thread_id]
+
+default_pool = SimpleThreadMappedPool()
 
 class MemcachedBackend(gobkvquerent.GobKVQuerent):
     """Gob back end which uses memcached for storage"""
 
-    def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
+    def __init__(self, servers=['udp:127.0.0.1'], expiry=0, binary=True,
                  serializer=PickleWrapper, lock_prefix='_lock',
-                 *args, **kwargs):
+                 pool=default_pool, *args, **kwargs):
         behaviors = {'ketama': True, 'cas': True}
         for key, value in kwargs.iteritems():
             behaviors[key] = value
 
-        self.mc = pylibmc.Client(servers, behaviors = behaviors, binary=binary)
-        """The memcached client for this back end."""
+        self.mc_args = (servers,)
+        self.mc_kwargs = {'behaviors': behaviors, 'binary': binary}
+        """The arguments for the memcached client."""
+
+        self.pool = pool
+        """The pool of memcached connections."""
 
         self.serializer = serializer
         """The serializer for this back end."""
@@ -48,7 +90,8 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
 
     def do_kv_multi_query(self, cls, keys):
         keys = [str(".".join(key)) for key in keys]
-        res = self.mc.get_multi(keys)
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            res = mc.get_multi(keys)
         ret = []
         for key in keys:
             if key not in res:
@@ -73,7 +116,8 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         return ret
 
     def do_kv_query(self, cls, key):
-        res = self.mc.get(str(".".join(key)))
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            res = mc.get(str(".".join(key)))
         if res == None:
             raise exception.NotFound(
                 "Could not find value for key %s" \
@@ -105,16 +149,17 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         
         Returns true if successful, false otherwise."""
         locks_acquired = []
-        for lock in locks:
-            # Lock the object
-            if self.mc.add(lock, '1'):
-                locks_acquired.append(lock)
-            else:
-                # The object is locked!
-                # Back out all acquired locks
-                self.release_locks(locks_acquired)
-                return False
-        return True
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            for lock in locks:
+                # Lock the object
+                if mc.add(lock, '1'):
+                    locks_acquired.append(lock)
+                else:
+                    # The object is locked!
+                    # Back out all acquired locks
+                    self.release_locks(locks_acquired)
+                    return False
+            return True
 
     def acquire_locks(self, locks):
         """Atomically acquires a set of locks."""
@@ -134,15 +179,17 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
 
         # We failed to acquire locks after *tries* attempts.  Say a
         # hail mary and force acquire.
-        for lock in locks:
-            # Hail Mary!
-            # Lock the object
-            self.mc.set(lock, 'locked')
-        return locks
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            for lock in locks:
+                # Hail Mary!
+                # Lock the object
+                mc.set(lock, 'locked')
+            return locks
 
     def release_locks(self, locks):
         """Releases a set of locks."""
-        self.mc.delete_multi(locks)
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            mc.delete_multi(locks)
 
     def key_to_mykey(self, key, use_persisted_version=False):
         mykey = super(MemcachedBackend, self).key_to_mykey(key,
@@ -306,40 +353,41 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             #     "collection_remove:", collection_remove, \
             #     "locks:", locks, "conditions:", conditions
 
-            add_multi = {}
-            for add in to_add:
-                add_multi['.'.join(add[0])] = self.serializer.dumps(add[1])
-            # no add_multi??
-            self.mc.set_multi(add_multi, self.expiry)
-            c_addsrms = self.mc.get_multi(['.'.join(c_add[0]) \
-                                               for c_add \
-                                               in itertools.chain(
-                                                   collection_add,
-                                                   collection_remove)])
-            for key in c_addsrms:
-                c_addsrms[key] \
-                    = set([tuple(path)
-                           for path in self.serializer.loads(c_addsrms[key])])
-            for c_add in collection_add:
-                key = '.'.join(c_add[0])
-                if key in c_addsrms:
-                    res = c_addsrms[key]
-                else:
-                    res = c_addsrms[key] = set()
-                res.add(c_add[1])
-            for c_rm in collection_remove:
-                key = '.'.join(c_add[0])
-                if key in c_addsrms:
-                    res = c_addsrms[key]
-                    res.discard(c_rm[1])
-            set_multi = {}
-            for k, v in c_addsrms.iteritems():
-                set_multi[k] = self.serializer.dumps(list(v))
-            for setting in to_set:
-                set_multi['.'.join(setting[0])] \
-                    = self.serializer.dumps(setting[1])
-            self.mc.set_multi(set_multi, self.expiry)
-            self.mc.delete_multi(['.'.join(delete) for delete in to_delete])
+            with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+                add_multi = {}
+                for add in to_add:
+                    add_multi['.'.join(add[0])] = self.serializer.dumps(add[1])
+                # no add_multi??
+                mc.set_multi(add_multi, self.expiry)
+                c_addsrms = mc.get_multi(['.'.join(c_add[0]) \
+                                                   for c_add \
+                                                   in itertools.chain(
+                                                       collection_add,
+                                                       collection_remove)])
+                for key in c_addsrms:
+                    c_addsrms[key] \
+                        = set([tuple(path)
+                               for path in self.serializer.loads(c_addsrms[key])])
+                for c_add in collection_add:
+                    key = '.'.join(c_add[0])
+                    if key in c_addsrms:
+                        res = c_addsrms[key]
+                    else:
+                        res = c_addsrms[key] = set()
+                    res.add(c_add[1])
+                for c_rm in collection_remove:
+                    key = '.'.join(c_add[0])
+                    if key in c_addsrms:
+                        res = c_addsrms[key]
+                        res.discard(c_rm[1])
+                set_multi = {}
+                for k, v in c_addsrms.iteritems():
+                    set_multi[k] = self.serializer.dumps(list(v))
+                for setting in to_set:
+                    set_multi['.'.join(setting[0])] \
+                        = self.serializer.dumps(setting[1])
+                mc.set_multi(set_multi, self.expiry)
+                mc.delete_multi(['.'.join(delete) for delete in to_delete])
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)
@@ -468,31 +516,32 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
 
         self.acquire_locks(locks)
         try:
-            if integrity_add:
-                c_adds = self.mc.get_multi(['.'.join(c_add[0]) \
-                                                for c_add \
-                                                in integrity_add])
-                for key in c_adds:
-                    c_adds[key] \
-                        = set([tuple(path)
-                               for path in self.serializer.loads(c_adds[key])])
-                for c_add in integrity_add:
-                    key = '.'.join(c_add[0])
-                    if key in c_adds:
-                        res = c_adds[key]
+            with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+                if integrity_add:
+                    c_adds = mc.get_multi(['.'.join(c_add[0]) \
+                                               for c_add \
+                                               in integrity_add])
+                    for key in c_adds:
+                        c_adds[key] \
+                            = set([tuple(path)
+                                   for path in self.serializer.loads(c_adds[key])])
+                    for c_add in integrity_add:
+                        key = '.'.join(c_add[0])
+                        if key in c_adds:
+                            res = c_adds[key]
+                        else:
+                            res = c_adds[key] = set()
+                        res.add(c_add[1])
+                    integrity_set = {}
+                    for k,v in c_adds.iteritems():
+                        integrity_set[k] = self.serializer.dumps(list(v))
+                    mc.set_multi(to_set, self.expiry)
+                    if self.expiry > 0:
+                        mc.set_multi(integrity_set, self.expiry + 10)
                     else:
-                        res = c_adds[key] = set()
-                    res.add(c_add[1])
-                integrity_set = {}
-                for k,v in c_adds.iteritems():
-                    integrity_set[k] = self.serializer.dumps(list(v))
-                self.mc.set_multi(to_set, self.expiry)
-                if self.expiry > 0:
-                    self.mc.set_multi(integrity_set, self.expiry + 10)
+                        mc.set_multi(integrity_set, self.expiry)
                 else:
-                    self.mc.set_multi(integrity_set, self.expiry)
-            else:
-                self.mc.set_multi(to_set, self.expiry)
+                    mc.set_multi(to_set, self.expiry)
         finally:
             self.release_locks(locks)
 
@@ -531,51 +580,53 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
         first_locks = set([self.lock_prefix + '.' + key \
                                for key in itertools.chain(keyset,
                                                           integrity_keyset)])
-        while tries > 0:
-            self.acquire_locks(first_locks)
-            try:
-                integrity_dict = self.mc.get_multi(integrity_keyset)
-                keyset_extra = set()
-                for v in integrity_dict.itervalues():
-                    key_list = self.serializer.loads(v)
-                    for key in key_list:
-                        keyset_extra.add(str('.'.join(key)))
-                second_locks = set([self.lock_prefix + '.' + key \
-                                        for key in keyset_extra]) \
-                               - first_locks
-                if not self.try_acquire_locks(second_locks):
+
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            while tries > 0:
+                self.acquire_locks(first_locks)
+                try:
+                    integrity_dict = mc.get_multi(integrity_keyset)
+                    keyset_extra = set()
+                    for v in integrity_dict.itervalues():
+                        key_list = self.serializer.loads(v)
+                        for key in key_list:
+                            keyset_extra.add(str('.'.join(key)))
+                    second_locks = set([self.lock_prefix + '.' + key \
+                                            for key in keyset_extra]) \
+                                   - first_locks
+                    if not self.try_acquire_locks(second_locks):
+                        self.release_locks(first_locks)
+                        tries -= 1
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        # successfully acquired all locks
+                        break
+                except:
                     self.release_locks(first_locks)
-                    tries -= 1
-                    time.sleep(sleep_time)
-                    continue
-                else:
-                    # successfully acquired all locks
-                    break
-            except:
-                self.release_locks(first_locks)
-                raise
-        else:
-            # we ran out of tries; say a hail mary and force the
-            # acquisition
-            self.acquire_locks(first_locks)
+                    raise
+            else:
+                # we ran out of tries; say a hail mary and force the
+                # acquisition
+                self.acquire_locks(first_locks)
+                try:
+                    integrity_dict = mc.get_multi(integrity_keyset)
+                    keyset_extra = set()
+                    for v in integrity_dict.itervalues():
+                        key_list = self.serializer.loads(v)
+                        for key in key_list:
+                            keyset_extra.add(str('.'.join(key)))
+                    second_locks = set([self.lock_prefix + '.' + key \
+                                            for key in keyset_extra]) \
+                                   - first_locks
+                    self.acquire_locks(second_locks)
+                except:
+                    self.release_locks(first_locks)
+                    raise
             try:
-                integrity_dict = self.mc.get_multi(integrity_keyset)
-                keyset_extra = set()
-                for v in integrity_dict.itervalues():
-                    key_list = self.serializer.loads(v)
-                    for key in key_list:
-                        keyset_extra.add(str('.'.join(key)))
-                second_locks = set([self.lock_prefix + '.' + key \
-                                        for key in keyset_extra]) \
-                               - first_locks
-                self.acquire_locks(second_locks)
-            except:
-                self.release_locks(first_locks)
-                raise
-        try:
-            self.mc.delete_multi(list(keyset | keyset_extra | integrity_keyset))
-        finally:
-            self.release_locks(first_locks | second_locks)
+                mc.delete_multi(list(keyset | keyset_extra | integrity_keyset))
+            finally:
+                self.release_locks(first_locks | second_locks)
 
     def _key_range_to_key(self, key_range):
         return key_range[0] + ('-',) + key_range[1]
