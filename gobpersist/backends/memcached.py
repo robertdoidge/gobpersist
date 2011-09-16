@@ -20,23 +20,18 @@ class PickleWrapper(object):
         return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
 
-def client_pool_factory(servers=['127.0.0.1'], max_clients=99, expiry=0, binary=True, *args, **kwargs):
+class MemcachedBackend(gobkvquerent.GobKVQuerent):
+    """Gob back end which uses memcached for storage"""
+
+    def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
+                 serializer=PickleWrapper, lock_prefix='_lock',
+                 *args, **kwargs):
         behaviors = {'ketama': True, 'cas': True}
         for key, value in kwargs.iteritems():
             behaviors[key] = value
 
-        client = pylibmc.Client(servers, behaviors = behaviors, binary=binary)
-        return pylibmc.ClientPool(client, max_clients)
-    
-class MemcachedBackend(gobkvquerent.GobKVQuerent):
-    """Gob back end which uses memcached for storage"""
-
-    def __init__(self, pool, expiry=0, 
-                 serializer=PickleWrapper, lock_prefix='_lock',
-                 *args, **kwargs):
-
-        self.clients = pool 
-        """The memcached client pool for this back end."""
+        self.mc = pylibmc.Client(servers, behaviors = behaviors, binary=binary)
+        """The memcached client for this back end."""
 
         self.serializer = serializer
         """The serializer for this back end."""
@@ -52,54 +47,52 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         super(MemcachedBackend, self).__init__()
 
     def do_kv_multi_query(self, cls, keys):
-        with self.clients.reserve() as mc:
-            keys = [str(".".join(key)) for key in keys]
-            res = mc.get_multi(keys)
-            ret = []
-            for key in keys:
-                if key not in res:
-                    raise exception.NotFound(
-                        "Could not find value for key %s" \
-                            % key)
-                store = self.serializer.loads(res[key])
-                if isinstance(store, (list, tuple)):
-                    # Collection or reference?
-                    if len(store) == 0:
-                        # Empty collection
-                        ret.append(store)
-                    elif isinstance(store[0], (list, tuple)):
-                        # Collection
-                        ret.append(self.do_kv_multi_query(cls, store))
-                    else:
-                        # Reference
-                        ret.append(self.do_kv_query(cls, store)[0])
-                else:
-                    # Object
-                    ret.append(self.mygob_to_gob(cls, store))
-            return ret
-
-    def do_kv_query(self, cls, key):
-        with self.clients.reserve() as mc:
-            res = mc.get(str(".".join(key)))
-            if res == None:
+        keys = [str(".".join(key)) for key in keys]
+        res = self.mc.get_multi(keys)
+        ret = []
+        for key in keys:
+            if key not in res:
                 raise exception.NotFound(
                     "Could not find value for key %s" \
-                        % ".".join(key))
-            store = self.serializer.loads(res)
+                        % key)
+            store = self.serializer.loads(res[key])
             if isinstance(store, (list, tuple)):
                 # Collection or reference?
                 if len(store) == 0:
                     # Empty collection
-                    return store
+                    ret.append(store)
                 elif isinstance(store[0], (list, tuple)):
                     # Collection
-                    return self.do_kv_multi_query(cls, store)
+                    ret.append(self.do_kv_multi_query(cls, store))
                 else:
                     # Reference
-                    return self.do_kv_query(cls, store)
+                    ret.append(self.do_kv_query(cls, store)[0])
             else:
                 # Object
-                return [self.mygob_to_gob(cls, store)]
+                ret.append(self.mygob_to_gob(cls, store))
+        return ret
+
+    def do_kv_query(self, cls, key):
+        res = self.mc.get(str(".".join(key)))
+        if res == None:
+            raise exception.NotFound(
+                "Could not find value for key %s" \
+                    % ".".join(key))
+        store = self.serializer.loads(res)
+        if isinstance(store, (list, tuple)):
+            # Collection or reference?
+            if len(store) == 0:
+                # Empty collection
+                return store
+            elif isinstance(store[0], (list, tuple)):
+                # Collection
+                return self.do_kv_multi_query(cls, store)
+            else:
+                # Reference
+                return self.do_kv_query(cls, store)
+        else:
+            # Object
+            return [self.mygob_to_gob(cls, store)]
 
     def kv_query(self, cls, key=None, key_range=None):
         if key_range is not None:
@@ -111,18 +104,17 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         """Tries to acquire the locks.
         
         Returns true if successful, false otherwise."""
-        with self.clients.reserve() as mc:
-            locks_acquired = []
-            for lock in locks:
-                # Lock the object
-                if mc.add(lock, '1'):
-                    locks_acquired.append(lock)
-                else:
-                    # The object is locked!
-                    # Back out all acquired locks
-                    self.release_locks(locks_acquired)
-                    return False
-            return True
+        locks_acquired = []
+        for lock in locks:
+            # Lock the object
+            if self.mc.add(lock, '1'):
+                locks_acquired.append(lock)
+            else:
+                # The object is locked!
+                # Back out all acquired locks
+                self.release_locks(locks_acquired)
+                return False
+        return True
 
     def acquire_locks(self, locks):
         """Atomically acquires a set of locks."""
@@ -145,14 +137,12 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
         for lock in locks:
             # Hail Mary!
             # Lock the object
-            with self.clients.reserve() as mc:
-                mc.set(lock, 'locked')
+            self.mc.set(lock, 'locked')
         return locks
 
     def release_locks(self, locks):
         """Releases a set of locks."""
-        with self.clients.reserve() as mc:
-            mc.delete_multi(locks)
+        self.mc.delete_multi(locks)
 
     def key_to_mykey(self, key, use_persisted_version=False):
         mykey = super(MemcachedBackend, self).key_to_mykey(key,
@@ -320,37 +310,36 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
             for add in to_add:
                 add_multi['.'.join(add[0])] = self.serializer.dumps(add[1])
             # no add_multi??
-            with self.clients.reserve() as mc:
-                mc.set_multi(add_multi, self.expiry)
-                c_addsrms = mc.get_multi(['.'.join(c_add[0]) \
-                                                   for c_add \
-                                                   in itertools.chain(
-                                                       collection_add,
-                                                       collection_remove)])
-                for key in c_addsrms:
-                    c_addsrms[key] \
-                        = set([tuple(path)
-                               for path in self.serializer.loads(c_addsrms[key])])
-                for c_add in collection_add:
-                    key = '.'.join(c_add[0])
-                    if key in c_addsrms:
-                        res = c_addsrms[key]
-                    else:
-                        res = c_addsrms[key] = set()
-                    res.add(c_add[1])
-                for c_rm in collection_remove:
-                    key = '.'.join(c_add[0])
-                    if key in c_addsrms:
-                        res = c_addsrms[key]
-                        res.discard(c_rm[1])
-                set_multi = {}
-                for k, v in c_addsrms.iteritems():
-                    set_multi[k] = self.serializer.dumps(list(v))
-                for setting in to_set:
-                    set_multi['.'.join(setting[0])] \
-                        = self.serializer.dumps(setting[1])
-                mc.set_multi(set_multi, self.expiry)
-                mc.delete_multi(['.'.join(delete) for delete in to_delete])
+            self.mc.set_multi(add_multi, self.expiry)
+            c_addsrms = self.mc.get_multi(['.'.join(c_add[0]) \
+                                               for c_add \
+                                               in itertools.chain(
+                                                   collection_add,
+                                                   collection_remove)])
+            for key in c_addsrms:
+                c_addsrms[key] \
+                    = set([tuple(path)
+                           for path in self.serializer.loads(c_addsrms[key])])
+            for c_add in collection_add:
+                key = '.'.join(c_add[0])
+                if key in c_addsrms:
+                    res = c_addsrms[key]
+                else:
+                    res = c_addsrms[key] = set()
+                res.add(c_add[1])
+            for c_rm in collection_remove:
+                key = '.'.join(c_add[0])
+                if key in c_addsrms:
+                    res = c_addsrms[key]
+                    res.discard(c_rm[1])
+            set_multi = {}
+            for k, v in c_addsrms.iteritems():
+                set_multi[k] = self.serializer.dumps(list(v))
+            for setting in to_set:
+                set_multi['.'.join(setting[0])] \
+                    = self.serializer.dumps(setting[1])
+            self.mc.set_multi(set_multi, self.expiry)
+            self.mc.delete_multi(['.'.join(delete) for delete in to_delete])
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)
@@ -360,10 +349,10 @@ class MemcachedBackend(gobkvquerent.GobKVQuerent):
 
 class MemcachedCache(MemcachedBackend, cache.Cache):
     """A cache backend based on Memcached."""
-    def __init__(self, pool, expiry=0,
+    def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
                  serializer=PickleWrapper, lock_prefix='_lock',
                  *args, **kwargs):
-        MemcachedBackend.__init__(self, pool, expiry,
+        MemcachedBackend.__init__(self, servers, expiry, binary,
                                   serializer, lock_prefix,
                                   *args, **kwargs)
 
@@ -479,32 +468,31 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
 
         self.acquire_locks(locks)
         try:
-            with self.clients.reserve() as mc:
-                if integrity_add:
-                    c_adds = mc.get_multi(['.'.join(c_add[0]) \
-                                                    for c_add \
-                                                    in integrity_add])
-                    for key in c_adds:
-                        c_adds[key] \
-                            = set([tuple(path)
-                                   for path in self.serializer.loads(c_adds[key])])
-                    for c_add in integrity_add:
-                        key = '.'.join(c_add[0])
-                        if key in c_adds:
-                            res = c_adds[key]
-                        else:
-                            res = c_adds[key] = set()
-                        res.add(c_add[1])
-                    integrity_set = {}
-                    for k,v in c_adds.iteritems():
-                        integrity_set[k] = self.serializer.dumps(list(v))
-                    mc.set_multi(to_set, self.expiry)
-                    if self.expiry > 0:
-                        mc.set_multi(integrity_set, self.expiry + 10)
+            if integrity_add:
+                c_adds = self.mc.get_multi(['.'.join(c_add[0]) \
+                                                for c_add \
+                                                in integrity_add])
+                for key in c_adds:
+                    c_adds[key] \
+                        = set([tuple(path)
+                               for path in self.serializer.loads(c_adds[key])])
+                for c_add in integrity_add:
+                    key = '.'.join(c_add[0])
+                    if key in c_adds:
+                        res = c_adds[key]
                     else:
-                        mc.set_multi(integrity_set, self.expiry)
+                        res = c_adds[key] = set()
+                    res.add(c_add[1])
+                integrity_set = {}
+                for k,v in c_adds.iteritems():
+                    integrity_set[k] = self.serializer.dumps(list(v))
+                self.mc.set_multi(to_set, self.expiry)
+                if self.expiry > 0:
+                    self.mc.set_multi(integrity_set, self.expiry + 10)
                 else:
-                    mc.set_multi(to_set, self.expiry)
+                    self.mc.set_multi(integrity_set, self.expiry)
+            else:
+                self.mc.set_multi(to_set, self.expiry)
         finally:
             self.release_locks(locks)
 
@@ -546,8 +534,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
         while tries > 0:
             self.acquire_locks(first_locks)
             try:
-                with self.clients.reserve() as mc:
-                    integrity_dict = mc.get_multi(integrity_keyset)
+                integrity_dict = self.mc.get_multi(integrity_keyset)
                 keyset_extra = set()
                 for v in integrity_dict.itervalues():
                     key_list = self.serializer.loads(v)
@@ -572,8 +559,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
             # acquisition
             self.acquire_locks(first_locks)
             try:
-                with self.clients.reserve() as mc:
-                    integrity_dict = mc.get_multi(integrity_keyset)
+                integrity_dict = self.mc.get_multi(integrity_keyset)
                 keyset_extra = set()
                 for v in integrity_dict.itervalues():
                     key_list = self.serializer.loads(v)
@@ -587,8 +573,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                 self.release_locks(first_locks)
                 raise
         try:
-            with self.clients.reserve() as mc:
-                mc.delete_multi(list(keyset | keyset_extra | integrity_keyset))
+            self.mc.delete_multi(list(keyset | keyset_extra | integrity_keyset))
         finally:
             self.release_locks(first_locks | second_locks)
 
