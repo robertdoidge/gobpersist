@@ -84,6 +84,11 @@ class Cache(session.GobTranslator):
         raise NotImplementedError("Cache type '%s' does not implement" \
                                       " cache_query" % self.__class__.__name__)
 
+    def cache_items(self, items):
+        """Store the provided items in the cache."""
+        raise NotImplementedError("Cache type '%s' does not implement" \
+                                      " cache" % self.__class__.__name__)
+
     def invalidate(self, items=None, keys=None):
         """Invalidate all queries pertaining to these objects."""
         raise NotImplementedError("Cache type '%s' does not implement" \
