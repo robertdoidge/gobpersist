@@ -508,6 +508,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                 if gob_key == base_key:
                     # this was a query on a primary key
                     # ...or something is (and subsequently will be...) horribly wrong
+                    base_key=None #Don't want the if block below to wipe out our work above.
                     break
                 base_coll.append(gob_key)
 
