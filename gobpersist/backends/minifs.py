@@ -47,10 +47,13 @@ class Partition(object):
 
     def search(self, identifier):
         """returns index if record is in file system"""
+
         if identifier in self.recordregistry:
             recindx = self.recordregistry.index(identifier)
-            print 'Found record ' + identifier + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
-            return recindx
+            if identifier in os.listdir(self.partdir):               
+                print 'Found record ' + identifier + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
+                return recindx
+            self.recordregistry.pop(recindx)
         return -1
             
     def get(self, identifier):
@@ -58,7 +61,10 @@ class Partition(object):
         file_index = self.search(identifier)
         if file_index > -1:
             path = self.generate_file_handle(identifier)
-            fp = open(path, 'rb')
+            try:
+                fp = open(path, 'rb')
+            except IOError:
+                fp = -1
             return fp
         print 'File not found in ' + self.__class__.__name__
         return -1
@@ -158,7 +164,7 @@ class Partition(object):
             data = fp
             fp.close()
             return data
-        except ValueError:
+        except IOError:
             print 'Could not read file from disk.'
             return -1
 
