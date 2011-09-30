@@ -3,15 +3,12 @@ import time
 import cPickle as pickle
 import datetime
 import itertools
-import thread
-import contextlib
 
 import pylibmc
 
 from . import gobkvquerent
 from . import cache
 from .. import exception
-from .. import session
 from .. import field
 
 class PickleWrapper(object):
@@ -21,42 +18,7 @@ class PickleWrapper(object):
     def dumps(obj):
         return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
-class SimpleThreadMappedPool(object):
-    def __init__(self):
-        self.pool = {}
-
-    @contextlib.contextmanager
-    def reserve(self, *args, **kwargs):
-        thread_id = thread.get_ident()
-        if thread_id not in self.pool:
-            # create a new pylibmc Client
-            client_hash = self.pool[thread_id] = {}
-            client_hash['args'] = args
-            client_hash['kwargs'] = kwargs
-            client_hash['mc'] = pylibmc.Client(*args, **kwargs)
-            client_hash['time'] = time.time()
-            yield client_hash['mc']
-        else:
-            client_hash = self.pool[thread_id]
-            if client_hash['args'] != args or client_hash['kwargs'] != kwargs \
-                    or client_hash['time'] > time.time() + 60 * 3:
-                client_hash['mc'].disconnect_all()
-                client_hash['args'] = args
-                client_hash['kwargs'] = kwargs
-                client_hash['mc'] = pylibmc.Client(*args, **kwargs)
-                client_hash['time'] = time.time()
-                yield client_hash['mc']
-            else:
-                yield client_hash['mc']
-
-    def relinquish(self):
-        thread_id = thread.get_ident()
-        if thread_id in self.pool:
-            client_hash = self.pool[thread_id]
-            client_hash['mc'].disconnect_all()
-            del self.pool[thread_id]
-
-default_pool = SimpleThreadMappedPool()
+default_pool = cache.SimpleThreadMappedPool(client=pylibmc.Client)
 
 class MemcachedBackend(gobkvquerent.GobKVQuerent):
     """Gob back end which uses memcached for storage"""
