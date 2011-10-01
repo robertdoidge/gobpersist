@@ -459,35 +459,20 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                 % ".".join(self.key_to_mykey(base_key)))
 
 
-    def cache_query(self, cls, items, key=None, key_range=None, query=None,
-                    retrieve=None, order=None, offset=None, limit=None):
-        base_key = key
-        # Order is significant...
-        if key_range is not None:
-            if key is not None:
-                raise ValueError("Both key and key_range specified")
-            base_key = self._key_range_to_key(key_range)
-        if query is not None:
-            base_key = self._query_to_key(base_key, query)
-        if retrieve is not None:
-            base_key = self._retrieve_to_key(base_key, retrieve)
-        if offset is not None or limit is not None:
-            base_key = self._offlim_to_key(base_key, offset, limit)
-
-        # base_key is now properly structured
+    def do_query(self, items, base_key=None):
 
         # we add the following entries:
         # 1. Each entry is added as the result of base_key
         # 2. All unique keys for this object are added
         # 3. Base_key is added to (_INTEGRITY_, key) for each key
 
-        if base_key is not None:
-            base_key = self.key_to_mykey(base_key)
-            base_coll = []
         to_set = {}
         integrity_add = []
         locks = set()
-        locks.add(self.lock_prefix + '.' + '.'.join(base_key))
+        if base_key is not None:
+            base_key = self.key_to_mykey(base_key)
+            base_coll = []
+            locks.add(self.lock_prefix + '.' + '.'.join(base_key))
         for gob in items:
             gob_key = self.key_to_mykey(gob.obj_key)
             to_set['.'.join(gob_key)] \
@@ -547,8 +532,27 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
             self.release_locks(locks)
 
 
+    def cache_query(self, cls, items, key=None, key_range=None, query=None,
+                    retrieve=None, order=None, offset=None, limit=None):
+        base_key = key
+        # Order is significant...
+        if key_range is not None:
+            if key is not None:
+                raise ValueError("Both key and key_range specified")
+            base_key = self._key_range_to_key(key_range)
+        if query is not None:
+            base_key = self._query_to_key(base_key, query)
+        if retrieve is not None:
+            base_key = self._retrieve_to_key(base_key, retrieve)
+        if offset is not None or limit is not None:
+            base_key = self._offlim_to_key(base_key, offset, limit)
+
+        # base_key is now properly structured
+        self.do_query(items, base_key=base_key)
+
+
     def cache_items(self, items):
-        self.cache_query(items=items)
+        self.do_query(items=items)
 
     def invalidate(self, items=None, keys=None):
         # remove all keys.
