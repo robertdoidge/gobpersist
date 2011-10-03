@@ -608,7 +608,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
 
     def _serialize_query(self, query):
         ret = []
-        for cmd, args in query:
+        for cmd, args in query.iteritems():
             if len(args) == 0:
                 continue
             if cmd in ('gt', 'ge', 'lt', 'le', 'eq', 'ne'):
