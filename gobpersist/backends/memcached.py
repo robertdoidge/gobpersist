@@ -445,13 +445,14 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                     gob.unique_keyset()):
                 locks.add(self.lock_prefix + '.' + '.'.join(key))
                 to_set['.'.join(key)] = self.serializer.dumps(gob_key)
-            for key in itertools.imap(
-                    self.key_to_mykey,
-                    gob.keyset()):
-                key = ('_INTEGRITY_',) + key
-                locks.add(self.lock_prefix + '.' + '.'.join(key))
-                integrity_add.append((key, base_key))
             if base_key is not None:
+                for key in itertools.imap(
+                        self.key_to_mykey,
+                        gob.keyset()):
+                    #Don't try to set integrity if there isn't a base_key
+                    key = ('_INTEGRITY_',) + key
+                    locks.add(self.lock_prefix + '.' + '.'.join(key))
+                    integrity_add.append((key, base_key))
                 if gob_key == base_key:
                     # this was a query on a primary key
                     # ...or something is (and subsequently will be...) horribly wrong
