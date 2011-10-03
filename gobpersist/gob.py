@@ -134,8 +134,8 @@ class Gob(object):
                     self.__dict__['primary_key'] = value
 
         # make foreign fields refer to local fields
-        for key in dir(self.__class__):
-            value = getattr(self.__class__, key)
+        for key in dir(self):
+            value = getattr(self, key)
             if isinstance(value, field.Foreign) and value.key is not None:
                 value.key = tuple([
                         self.__dict__[keyelem.instance_key] \

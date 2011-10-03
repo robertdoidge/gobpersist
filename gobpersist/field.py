@@ -187,6 +187,8 @@ class Field(object):
     # Functions for delegation
 
     def __getattr__(self, name):
+        if name in ('__getnewargs__', '__getstate__', '__setstate__'):
+            return super(self, Field).__getattr__(self, name)
         return getattr(self.value, name)
 
     def __repr__(self):
@@ -881,6 +883,8 @@ class Foreign(Field):
 
         super(Foreign, self).__init__(name=name, modifiable=False)
 
+        del self.value
+
 
     def mark_persisted(self):
         pass
@@ -987,13 +991,13 @@ class ForeignObject(Foreign):
 
     def fetch_value(self):
         if self.key is None:
-            ret = instance.session.query(
+            ret = self.instance.session.query(
                 cls=self.foreign_class,
                 query={'eq': [(self.foreign_field,),
                               getattr(instance, self.local_field)]
                        })
         else:
-            ret = instance.session.query(
+            ret = self.instance.session.query(
                 cls=self.foreign_class,
                 key=self.key)
         if ret:
@@ -1013,12 +1017,12 @@ class ForeignCollection(Foreign):
         if self.key is None:
             return schema.SchemaCollection(
                 cls=self.foreign_class,
-                session=instance.session,
+                session=self.instance.session,
                 sticky={'eq': [(self.foreign_field,), local_field]},
                 autoset={self.foreign_field : local_field})
         else:
             return schema.SchemaCollection(
                 cls=self.foreign_class,
-                session=instance.session,
+                session=self.instance.session,
                 key=self.key,
                 autoset={self.foreign_field : local_field})
