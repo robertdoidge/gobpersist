@@ -23,7 +23,7 @@ default_pool = cache.SimpleThreadMappedPool(client=pylibmc.Client)
 class MemcachedBackend(gobkvquerent.GobKVQuerent):
     """Gob back end which uses memcached for storage"""
 
-    def __init__(self, servers=['udp:127.0.0.1'], expiry=0, binary=True,
+    def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
                  serializer=PickleWrapper, lock_prefix='_lock',
                  pool=default_pool, *args, **kwargs):
         behaviors = {'ketama': True, 'cas': True}
@@ -451,6 +451,7 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                         gob.keyset()):
                     #Don't try to set integrity if there isn't a base_key
                     key = ('_INTEGRITY_',) + key
+                    print "\n\n**integrity key created: " + str(key) + '\n\n'
                     locks.add(self.lock_prefix + '.' + '.'.join(key))
                     integrity_add.append((key, base_key))
                 if gob_key == base_key:
