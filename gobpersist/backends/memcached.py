@@ -451,7 +451,6 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                         gob.keyset()):
                     #Don't try to set integrity if there isn't a base_key
                     key = ('_INTEGRITY_',) + key
-                    print "\n\n**integrity key created: " + str(key) + '\n\n'
                     locks.add(self.lock_prefix + '.' + '.'.join(key))
                     integrity_add.append((key, base_key))
                 if gob_key == base_key:
