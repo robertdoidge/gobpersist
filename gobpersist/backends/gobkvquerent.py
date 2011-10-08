@@ -4,8 +4,10 @@ import operator
 import functools
 
 from .. import session
-from .. import gob
+from .. import gob as gp_gob
 from .. import exception
+from .. import field
+from .. import schema
 
 class GobKVQuerent(session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
@@ -18,7 +20,7 @@ class GobKVQuerent(session.Backend):
             # identifier
             value = gob
             for pathelem in arg:
-                if not isinstance(value, gob.Gob):
+                if not isinstance(value, gp_gob.Gob):
                     raise exception.QueryError("Could not understand identifier %s" \
                                          % repr(arg))
                 if not isinstance(pathelem, field.Field):
@@ -27,7 +29,7 @@ class GobKVQuerent(session.Backend):
                     value = pathelem.value
                 else:
                     value = pathelem
-            if isinstance(value, gob.Gob):
+            if isinstance(value, gp_gob.Gob):
                 raise exception.QueryError("Could not understand identifier %s" \
                                      % repr(arg))
             elif isinstance(value, schema.SchemaCollection):
@@ -41,14 +43,14 @@ class GobKVQuerent(session.Backend):
     def _apply_operator(self, gob, op, arg1, arg2):
         """Apply operator to the two arguments, taking quantifiers into account.
         """
-        # print "applying operator %s to %s and %s" % (repr(op),
-        #                                              repr(arg1),
-        #                                              repr(arg2))
+        print "applying operator %s to %s and %s" % (repr(op),
+                                                     repr(arg1),
+                                                     repr(arg2))
         if isinstance(arg1, dict):
             if len(arg1) > 1:
                 raise exception.QueryError("Too many keys in quantifier")
             k, v = arg1.items()[0]
-            v = self.get_value(gob, v)
+            v = self._get_value(gob, v)
             if k == 'any':
                 for arg1 in v:
                     if self._apply_operator(gob, op, arg1, arg2):
@@ -70,7 +72,7 @@ class GobKVQuerent(session.Backend):
             if len(arg2) > 1:
                 raise exception.QueryError("Too many keys in quantifier")
             k, v = arg2.items()[0]
-            v = self.get_value(gob, v)
+            v = self._get_value(gob, v)
             if k == 'any':
                 for arg2 in v:
                     if self._apply_operator(gob, op, arg1, arg2):
@@ -89,13 +91,13 @@ class GobKVQuerent(session.Backend):
             else:
                 raise exception.QueryError("Invalid key '%s' in quantifier" % k)
         else:
-            return op(arg1, arg2)
+            return op(self._get_value(gob, arg1), self._get_value(gob, arg2))
 
 
     def _execute_query(self, gob, query):
         """Execute a query on an object, returning True if it matches
         the query and False otherwise."""
-        # print "executing %s on %s" % (repr(query), repr(gob))
+        print "executing %s on %s" % (repr(query), repr(gob))
         for cmd, args in query.iteritems():
             if cmd in ('eq', 'ne', 'lt', 'gt', 'ge', 'le'):
                 if len(args) < 2:

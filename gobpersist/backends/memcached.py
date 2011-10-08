@@ -606,10 +606,13 @@ class MemcachedCache(MemcachedBackend, cache.Cache):
                 raise exception.QueryError("Too many keys in quantifier")
             k, v = term.items()[0]
             v = _serialize_term(v)
-            return ['_' + k + '_'] + v
-        else:
+            return ('_' + k + '_',) + v
+        elif isinstance(term, tuple):
             # Identifier
-            return ['('] + term + [')']
+            return ('(',) + term + (')',)
+        else:
+            # Literal
+            return (repr(term),)
 
     def _serialize_query(self, query):
         ret = []
