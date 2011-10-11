@@ -47,10 +47,13 @@ class Partition(object):
 
     def search(self, identifier):
         """returns index if record is in file system"""
+
         if identifier in self.recordregistry:
             recindx = self.recordregistry.index(identifier)
-            print 'Found record ' + identifier + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
-            return recindx
+            if identifier in os.listdir(self.partdir):               
+                print 'Found record ' + identifier + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
+                return recindx
+            self.recordregistry.pop(recindx)
         return -1
             
     def get(self, identifier):
@@ -58,14 +61,20 @@ class Partition(object):
         file_index = self.search(identifier)
         if file_index > -1:
             path = self.generate_file_handle(identifier)
-            fp = open(path, 'rb')
+            try:
+                fp = open(path, 'rb')
+            except IOError:
+                fp = -1
             return fp
         print 'File not found in ' + self.__class__.__name__
         return -1
 
     def add(self, identifier, fp):
         """perform storage of file to disk"""
+        file_size = 0
+
         file_size = os.fstat(fp.fileno())[6]
+
         if file_size >= self.partsize:
             print 'File ' + identifier + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
             return -1
@@ -73,8 +82,8 @@ class Partition(object):
             print 'Not enough space to store file ' + identifier + '.'
             return -1
         if self.search(identifier) > -1:
-            self.update(identifer, fp)
-            return 0
+            self.remove(identifer)
+        
         self.sizeregistry[identifier] = file_size
         self.partremsize = self.partremsize - file_size
         self.filelocks.add(identifier)
@@ -83,7 +92,7 @@ class Partition(object):
         self.recordregistry.insert(0, identifier)
         print 'inserting ' + identifier
         print 'File ' + identifier + ' successfully stored.'
-        return 0
+        return fp
   
     def remove(self, identifier):
         """perform removal of file from disk"""
@@ -122,33 +131,41 @@ class Partition(object):
 
     def write_disk(self, identifier, fp):
         """writes a file to disk, returns 1 if everything went good"""
-        fp.seek(0)
+        
         path = self.generate_file_handle(identifier)
         fp_to_disk = open(path, 'wb')
         tempstr = ""
         
-        tempstr = fp.read(4096)
-        while tempstr != "":
-            fp_to_disk.write(tempstr)
+        #file object iteration
+        if type(fp) == "<type 'file'>":
+            fp.seek(0)
             tempstr = fp.read(4096)
-        
-        fp_to_disk.close()
-        return 0
-    
+            while tempstr != "":
+                fp_to_disk.write(tempstr)
+                tempstr = fp.read(4096)
+            fp_to_disk.close()
+            fp.seek(0)
+            return 0
+        #generator iteration
+        else:
+            for tempstr in fp:
+                fp_to_disk.write(tempstr)
+            fp_to_disk.close()
+            return 0
+
     def read_disk(self, identifier):
         """returns data of a file, if in record. otherwise returns -1"""
         if self.partdir.endswith('/'):
             path = self.partdir + identifier
         else:
             path = self.partdir + '/' + identifier
-        
         try:    
             fp = open(path, 'rb')
             data = fp
             fp.close()
             return data
-        except ValueError:
-            print 'couldnt read this file bro.'
+        except IOError:
+            print 'Could not read file from disk.'
             return -1
 
     def empty_storage(self):
@@ -166,43 +183,45 @@ class MRUPreserve(Partition):
         """determines if we need to make space for new cache items"""
         #check size of file
         #if incoming size is greater than available space
+        deleted_list = []
         if file_size >= self.partremsize:
         #start kickin out old data
             while file_size >= self.partremsize:
                 currentid = self.recordregistry[ -1 ]
                 self.remove(currentid)
-        return 0
+                deleted_list.append(currentid)
+        return deleted_list
             
     def add(self, identifier, fp):
         """perform storage of file to disk"""
         #performs same function as add in Partition class, but
-        #    actively removes files if filesize > space remaining
-        
+        #    actively removes files if filesize > space remaining        
+        deleted = [] #list of removed files, if removed
         file_size = os.fstat(fp.fileno())[6]
         self.sizeregistry[identifier] = file_size
         if file_size >= self.partsize:
             print 'File ' + identifier + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
             return -1
         if file_size >= self.partremsize:
-            self.assess_removals(identifier, file_size)
+            deleted = self.assess_removals(identifier, file_size)
         if self.search(identifier) > -1:
             self.update(identifer, fp)
-            return 0
+            return deleted
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
         self.pop_and_insert(identifier)
         print 'inserting ' + identifier
         print 'File ' + identifier + ' successfully stored.'
-        return 0
+        return deleted
 
     def update(self, identifier, fp):
         """replace file data of stored file with new file data"""
         #unique to this method, returns a tuple of 0 return value and deleted objects
         if self.search(identifier) is not -1:    
             self.remove(identifier)
-            self.add(identifier, fp)
+            deleted = self.add(identifier, fp)
             print 'File ' + identifier + ' successfully updated.'
-            return 0
+            return deleted
         print 'Could not find file ' + identifier + '.'
         return -1
 
@@ -225,3 +244,31 @@ class MRUPreserve(Partition):
             #That just means item hasn't been cached recently.  Continue insert!
             pass
         self.recordregistry.insert(0, identifier)
+
+class MRUGobPreserve(MRUPreserve):
+    """Exact same thing as MRUPreserve, but overwritten add() method allows use of iterables"""
+    def __init__(self, path='/home/admin/accellion_filestore', capacity=2000):
+        super(MRUGobPreserve, self).__init__(path, capacity)
+
+    def add(self, identifier, fp, size):
+        """perform storage of file to disk"""
+        #performs same function as add in Partition class, but
+        #    actively removes files if filesize > space remaining        
+        deleted = [] #list of removed files, if removed
+        file_size = size
+        self.sizeregistry[identifier] = file_size
+        if file_size >= self.partsize:
+            print 'File ' + identifier + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
+            return -1
+        if file_size >= self.partremsize:
+            deleted = self.assess_removals(identifier, file_size)
+        if self.search(identifier) > -1:
+            self.update(identifer, fp)
+            return deleted
+        self.partremsize = self.partremsize - file_size
+        self.write_disk(identifier, fp)
+        self.pop_and_insert(identifier)
+        print 'inserting ' + identifier
+        print 'File ' + identifier + ' successfully stored.'
+        return deleted
+

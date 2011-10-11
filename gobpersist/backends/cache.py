@@ -1,5 +1,8 @@
 from __future__ import absolute_import
 import itertools
+import thread
+import contextlib
+import time
 
 from .. import session
 from .. import exception
@@ -35,7 +38,7 @@ class CachingBackend(session.Backend):
                 # couldn't find it in cache
                 cache_refill = getattr(self.backend, 'cache_refill', None)
                 if cache_refill is not None:
-                    cache_refill(self.cache, key, key_range, query,
+                    cache_refill(self.cache, cls, key, key_range, query,
                                  retrieve, order, offset, limit)
                 else:
                     res = self.backend.query(cls, key, key_range, query,
@@ -84,7 +87,65 @@ class Cache(session.GobTranslator):
         raise NotImplementedError("Cache type '%s' does not implement" \
                                       " cache_query" % self.__class__.__name__)
 
+    def cache_items(self, items):
+        """Store the provided items in the cache."""
+        raise NotImplementedError("Cache type '%s' does not implement" \
+                                      " cache" % self.__class__.__name__)
+
     def invalidate(self, items=None, keys=None):
         """Invalidate all queries pertaining to these objects."""
         raise NotImplementedError("Cache type '%s' does not implement" \
                                       " invalidate" % self.__class__.__name__)
+
+
+class SimpleThreadMappedPool(object):
+    def __init__(self, client):
+        '''
+        @param client: The class of the client object.  We will be instantiating these based on the
+                        args and kwargs passed in to reserve()
+        '''
+        self.pool = {}
+        self.client = client
+
+    @contextlib.contextmanager
+    def reserve(self, *args, **kwargs):
+        thread_id = thread.get_ident()
+        if thread_id not in self.pool:
+            # create a new Client
+            client_hash = self.pool[thread_id] = {}
+            client_hash['args'] = args
+            client_hash['kwargs'] = kwargs
+            client_hash['client'] = self.client(*args, **kwargs)
+            client_hash['time'] = time.time()
+            yield client_hash['client']
+        else:
+            client_hash = self.pool[thread_id]
+            if client_hash['args'] != args or client_hash['kwargs'] != kwargs \
+                    or ('client' in client_hash and not client_hash['client']) \
+                    or client_hash['time'] > time.time() + 60 * 3:
+                #Try to close the existing connection using any method we know about
+                client_hash['client'] = self.client_close(client_hash['client'])
+                client_hash['args'] = args
+                client_hash['kwargs'] = kwargs
+                client_hash['client'] = self.client(*args, **kwargs)
+                client_hash['time'] = time.time()
+                yield client_hash['client']
+            else:
+                yield client_hash['client']
+
+    def relinquish(self):
+        thread_id = thread.get_ident()
+        if thread_id in self.pool:
+            client_hash = self.pool[thread_id]
+            client_hash['client'] = self.client_close(client_hash['client'])
+            del self.pool[thread_id]
+
+    def client_close(self, client):
+        #Try to close the existing connection using any method we know about
+        if hasattr(client, 'disconnect_all'):
+            client.disconnect_all()
+        else: #Or just drop the object all together.
+            del client
+            client = None
+            
+        return client
