@@ -1,6 +1,4 @@
-from __future__ import absolute_import
-from . import field
-from . import gob
+import gobpersist.field
 
 class GobTranslator(object):
     """Abstract class to translate gobs for the backend."""
@@ -11,8 +9,8 @@ class GobTranslator(object):
         mygob = {}
         for key in dir(gob):
             f = getattr(gob, key)
-            if isinstance(f, field.Field) \
-                    and not isinstance(f, field.Foreign) \
+            if isinstance(f, gobpersist.field.Field) \
+                    and not isinstance(f, gobpersist.field.Foreign) \
                     and (not only_dirty or f.dirty):
                 mygob[f.name] = self.field_to_myfield(f)
         return mygob
@@ -22,7 +20,7 @@ class GobTranslator(object):
         backend."""
         ret = {}
         for key, value in query.iteritems():
-            if key in ('eq', 'ne', 'gt', 'lt', 'gte', 'lte'):
+            if key in ('eq', 'ne', 'gt', 'lt', 'ge', 'le'):
                 newvalue = []
                 f = None
                 pass2 = []
@@ -49,7 +47,7 @@ class GobTranslator(object):
                         newvalue.append(identifier)
                     else:
                         # literal
-                        if isinstance(item, field.Field):
+                        if isinstance(item, gobpersist.field.Field):
                             newvalue.append(self.field_to_myfield(item))
                         elif f is not None:
                             newf = f.clone(clean_break=True)
@@ -87,7 +85,7 @@ class GobTranslator(object):
         backend."""
         ret = set()
         for retrieval in retrieve:
-            if not isinstance(retrieval, field.Field):
+            if not isinstance(retrieval, gobpersist.field.Field):
                 retrieval = getattr(cls, retrieval)
             ret.add(retrieval.name)
         return ret
@@ -102,7 +100,7 @@ class GobTranslator(object):
             if key not in ('asc', 'desc'):
                 raise ValueError("Invalid key '%s' in ordering %s" \
                                      % (key, repr(ordering)))
-            if not isinstance(ordering, field.Field):
+            if not isinstance(ordering, gobpersist.field.Field):
                 ordering = getattr(cls, ordering)
             ret.add({key: ordering.name})
         return ret
@@ -116,10 +114,10 @@ class GobTranslator(object):
                 raise ValueError("Could not find class for element %s of" \
                                      " identifier %s" \
                                      % (repr(pathelem), repr(idnt)))
-            if not isinstance(pathelem, field.Field):
+            if not isinstance(pathelem, gobpersist.field.Field):
                 pathelem = getattr(cls, pathelem)
             ret.append(pathelem.name)
-            if isinstance(pathelem, field.Foreign):
+            if isinstance(pathelem, gobpersist.field.Foreign):
                 cls = pathelem.foreign_class
             else:
                 # This should be the last element
@@ -134,10 +132,10 @@ class GobTranslator(object):
                 raise ValueError("Could not find class for element %s of" \
                                      " identifier %s" \
                                      % (repr(pathelem), repr(idnt)))
-            if not isinstance(pathelem, field.Field):
+            if not isinstance(pathelem, gobpersist.field.Field):
                 pathelem = getattr(cls, pathelem)
             retfield = pathelem
-            if isinstance(pathelem, field.Foreign):
+            if isinstance(pathelem, gobpersist.field.Foreign):
                 cls = pathelem.foreign_class
             else:
                 # This should be the last element
@@ -157,7 +155,7 @@ class GobTranslator(object):
 
         Serialization should be done in here or in value_to_myvalue.
         """
-        if isinstance(value, field.Field):
+        if isinstance(value, gobpersist.field.Field):
             return self.field_to_myfield(value, use_persisted_version)
         if isinstance(value, (list, set, tuple)):
             type_ = value.__class__
@@ -251,7 +249,7 @@ class Session(GobTranslator):
             retrieve.append(cls.primary_key)
             for k in dir(cls):
                 v = getattr(cls, k)
-                if isinstance(v, field.Field) and v.revision_tag:
+                if isinstance(v, gobpersist.field.Field) and v.revision_tag:
                     retrieve.append(k)
         if cls.class_key not in self.collections:
             self.collections[cls.class_key] = {}
@@ -259,6 +257,7 @@ class Session(GobTranslator):
         for gob in self.backend.query(cls, key, key_range, query, retrieve,
                                       order, offset, limit):
             if gob.primary_key in self.collections[gob.class_key]:
+                # deduplicate
                 self._update_object(
                     self.collections[gob.class_key][gob.primary_key],
                     gob)
@@ -277,9 +276,9 @@ class Session(GobTranslator):
         """
         for key in dir(gob):
             value = getattr(gob, key)
-            if isinstance(value, field.Field) \
+            if isinstance(value, gobpersist.field.Field) \
                     and value.instance is not None \
-                    and not isinstance(value, field.Foreign) \
+                    and not isinstance(value, gobpersist.field.Foreign) \
                     and (not value.dirty or force):
                 value.value = updater.__dict__[value.instance_key].value
 
@@ -309,7 +308,7 @@ class Session(GobTranslator):
                 }
             for key in dir(gob):
                 f = getattr(gob, key)
-                if isinstance(f, field.Field) \
+                if isinstance(f, gobpersist.field.Field) \
                         and f.revision_tag \
                         and f.has_persisted_value:
                     f = f.clone(clean_break = True)
@@ -327,7 +326,7 @@ class Session(GobTranslator):
                 }
             for key in dir(gob):
                 f = getattr(gob, key)
-                if isinstance(f, field.Field) \
+                if isinstance(f, gobpersist.field.Field) \
                         and f.revision_tag \
                         and f.has_persisted_value:
                     f = f.clone(clean_break=True)
@@ -500,6 +499,8 @@ class StorageEngine(GobTranslator):
                 while len(readstr) < size:
                     try:
                         readstr += iterable.next()
+                        if readstr:
+                            break
                     except StopIteration:
                         break
                 ret = readstr[:size]

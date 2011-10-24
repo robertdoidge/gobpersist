@@ -1,56 +1,80 @@
-from __future__ import absolute_import
-
 import operator
 import functools
+import types
 
-from .. import session
-from .. import gob as gp_gob
-from .. import exception
-from .. import field
-from .. import schema
+import gobpersist.session
+import gobpersist.gob
+import gobpersist.exception
+import gobpersist.field
 
-class GobKVQuerent(session.Backend):
+class GobKVQuerent(gobpersist.session.Backend):
     """Abstract superclass (or pluggable back-end) for classes that
     aren't able to implement complex queries.
     """
 
-    def _get_value(self, gob, arg):
-        """Turn an argument into a value."""
+    def _get_value_recursiter(self, gob, arg, path=None):
+        """Turn an argument into a value, iterator version."""
+        if not path:
+            path = list(arg)
         if isinstance(arg, tuple):
             # identifier
             value = gob
-            for pathelem in arg:
-                if not isinstance(value, gp_gob.Gob):
-                    raise exception.QueryError("Could not understand identifier %s" \
-                                         % repr(arg))
-                if not isinstance(pathelem, field.Field):
+            while path:
+                pathelem = path.pop(0):
+                if not isinstance(value, gobpersist.gob.Gob):
+                    raise gobpersist.exception.QueryError("Could not understand " \
+                                                              "identifier %s" \
+                                                              % repr(arg))
+                if isinstance(pathelem, gobpersist.field.Field):
+                    pathelem = getattr(value, pathelem.name)
+                else:
                     pathelem = getattr(value, pathelem)
-                if isinstance(pathelem, field.Foreign):
+                if isinstance(pathelem, gobpersist.field.ForeignObject):
                     value = pathelem.value
+                elif isinstance(pathelem, gobpersist.field.ForeignCollection):
+                    for item in pathelem.list():
+                        for r in self._get_value_recursiter(item, arg, path):
+                            yield r
                 else:
                     value = pathelem
-            if isinstance(value, gp_gob.Gob):
-                raise exception.QueryError("Could not understand identifier %s" \
-                                     % repr(arg))
-            elif isinstance(value, schema.SchemaCollection):
-                return value.list()
+            if isinstance(value, gobpersist.gob.Gob):
+                raise gobpersist.exception.QueryError("Could not understand " \
+                                                          "identifier %s" \
+                                                          % repr(arg))
             else:
-                return value
+                yield value
         else: # literal
-            return arg
+            yield arg
+
+
+    def _get_value(self, gob, arg):
+        """Turn an argument into a value."""
+        ret = []
+        for value in _get_value_recursiter(gob, arg):
+            ret.append(value)
+        if not ret:
+            raise gobpersist.exception.QueryError("Could not understand " \
+                                                      "identifier %s" \
+                                                      % repr(arg))
+        elif len(ret) > 1:
+            return ret
+        else:
+            return ret[0]
 
 
     def _apply_operator(self, gob, op, arg1, arg2):
-        """Apply operator to the two arguments, taking quantifiers into account.
+        """Apply operator to the two arguments, taking quantifiers
+        into account.
         """
         print "applying operator %s to %s and %s" % (repr(op),
                                                      repr(arg1),
                                                      repr(arg2))
         if isinstance(arg1, dict):
             if len(arg1) > 1:
-                raise exception.QueryError("Too many keys in quantifier")
+                raise gobpersist.exception.QueryError("Too many keys in " \
+                                                          "quantifier")
             k, v = arg1.items()[0]
-            v = self._get_value(gob, v)
+            v = self._get_value_recursiter(gob, v)
             if k == 'any':
                 for arg1 in v:
                     if self._apply_operator(gob, op, arg1, arg2):
@@ -67,12 +91,14 @@ class GobKVQuerent(session.Backend):
                         return False
                 return True
             else:
-                raise exception.QueryError("Invalid key '%s' in quantifier" % k)
+                raise gobpersist.exception.QueryError("Invalid key '%s' in " \
+                                                          "quantifier" % k)
         elif isinstance(arg2, dict):
             if len(arg2) > 1:
-                raise exception.QueryError("Too many keys in quantifier")
+                raise gobpersist.exception.QueryError("Too many keys in " \
+                                                          "quantifier")
             k, v = arg2.items()[0]
-            v = self._get_value(gob, v)
+            v = self._get_value_recursiter(gob, v)
             if k == 'any':
                 for arg2 in v:
                     if self._apply_operator(gob, op, arg1, arg2):
@@ -89,7 +115,8 @@ class GobKVQuerent(session.Backend):
                         return False
                 return True
             else:
-                raise exception.QueryError("Invalid key '%s' in quantifier" % k)
+                raise gobpersist.exception.QueryError("Invalid key '%s' " \
+                                                          "in quantifier" % k)
         else:
             return op(self._get_value(gob, arg1), self._get_value(gob, arg2))
 
@@ -123,7 +150,8 @@ class GobKVQuerent(session.Backend):
                     if self._execute_query(gob, subquery):
                         return False
             else:
-                raise exception.QueryError("Unknown query element %s" % repr(cmd))
+                raise gobpersist.exception.QueryError("Unknown query element " \
+                                                          "%s" % repr(cmd))
         return True
         
 
@@ -138,7 +166,7 @@ class GobKVQuerent(session.Backend):
                     if not isinstance(ordering, dict) or not len(ordering) == 1:
                         raise ValueError("Invalid ordering: %s" % repr(ordering))
                     key, ordering = ordering.items()[0]
-                    if isinstance(ordering, field.Field):
+                    if isinstance(ordering, gobpersist.field.Field):
                         ordering = ordering._name
                     res = cmp(self._get_value(a, (ordering,)), self._get_value(b, (ordering,)))
                     if res == 0:

@@ -1,5 +1,4 @@
-from __future__ import absolute_import
-from . import field
+import gobpersist.field
 
 def field_key(key):
     return '_Field__' + key
@@ -83,7 +82,7 @@ class Gob(object):
         # set up fields
         primary_key = None
         for key, value in cls.__dict__.iteritems():
-            if key != 'primary_key' and isinstance(value, field.Field):
+            if key != 'primary_key' and isinstance(value, gobpersist.field.Field):
                 value.instance_key = field_key(key)
                 value._name = key
                 if value.primary_key:
@@ -93,7 +92,7 @@ class Gob(object):
                     primary_key = value
                 if value.name is None:
                     value.name = key
-                if isinstance(value, field.Foreign):
+                if isinstance(value, gobpersist.field.Foreign):
                     if value.foreign_class == 'self':
                         value.foreign_class = cls
 
@@ -126,7 +125,7 @@ class Gob(object):
         # make local copies of fields
         for key in dir(self.__class__):
             value = getattr(self.__class__, key)
-            if isinstance(value, field.Field):
+            if isinstance(value, gobpersist.field.Field):
                 value = value.clone()
                 value.instance = self
                 self.__dict__[value.instance_key] = value
@@ -136,31 +135,31 @@ class Gob(object):
         # make foreign fields refer to local fields
         for key in dir(self):
             value = getattr(self, key)
-            if isinstance(value, field.Foreign) and value.key is not None:
+            if isinstance(value, gobpersist.field.Foreign) and value.key is not None:
                 value.key = tuple([
                         self.__dict__[keyelem.instance_key] \
-                                    if isinstance(keyelem, field.Field) \
+                                    if isinstance(keyelem, gobpersist.field.Field) \
                                 else keyelem \
                             for keyelem in value.key])
 
         # make indices refer to local fields
         self.keys \
             = [tuple([self.__dict__[keyelem.instance_key] \
-                                  if isinstance(keyelem, field.Field) \
+                                  if isinstance(keyelem, gobpersist.field.Field) \
                                   and keyelem.instance is None \
                               else keyelem \
                           for keyelem in path]) \
                    for path in self.keys]
         self.unique_keys \
             = [tuple([self.__dict__[keyelem.instance_key] \
-                                  if isinstance(keyelem, field.Field) \
+                                  if isinstance(keyelem, gobpersist.field.Field) \
                                   and keyelem.instance is None \
                               else keyelem \
                           for keyelem in path]) \
                    for path in self.unique_keys]
         self.obj_key \
             = tuple([self.__dict__[keyelem.instance_key] \
-                                 if isinstance(keyelem, field.Field) \
+                                 if isinstance(keyelem, gobpersist.field.Field) \
                                  and keyelem.instance is None \
                              else keyelem \
                          for keyelem in self.obj_key])
@@ -210,9 +209,9 @@ class Gob(object):
         doing.
         """
         for value in self.__dict__.itervalues():
-            if isinstance(value, field.Field):
+            if isinstance(value, gobpersist.field.Field):
                 value.prepare_add()
-        
+
 
     def prepare_update(self):
         """Prepares this object to be updated in the store.
@@ -221,7 +220,7 @@ class Gob(object):
         doing.
         """
         for value in self.__dict__.itervalues():
-            if isinstance(value, field.Field):
+            if isinstance(value, gobpersist.field.Field):
                 value.prepare_update()
 
 
@@ -240,7 +239,7 @@ class Gob(object):
         This does not clear any pending operations on this object; for
         that you must use session.rollback()."""
         for value in self.__dict__.itervalues():
-            if isinstance(value, field.Field):
+            if isinstance(value, gobpersist.field.Field):
                 value.revert()
 
 
@@ -254,7 +253,7 @@ class Gob(object):
         self.dirty = False
 
         for value in self.__dict__.itervalues():
-            if isinstance(value, field.Field):
+            if isinstance(value, gobpersist.field.Field):
                 value.mark_persisted()
 
 
@@ -266,13 +265,13 @@ class Gob(object):
         Note that schema initialization is still rather dumb.  This
         will just overwrite anything that's in the database, so only
         use it for true initialization."""
-        keys = cls.keys[:]
-        keys = set(keys)
+        keys = cls.keys[:] # Why did I copy this before I used it to create a
+        keys = set(keys)   # set which is also a copy???
         keys.add(cls.coll_key)
         for key in keys:
             simple = True
             for entry in keys:
-                if isinstance(entry, field.Field):
+                if isinstance(entry, gobpersist.field.Field):
                     simple = False
                     break
             if simple:
@@ -285,20 +284,20 @@ class Gob(object):
             ', '.join(
                 set(["%s=%s" % (value._name, repr(value)) \
                          for value in filter(
-                            lambda x: isinstance(x, field.Field) \
-                                and not isinstance(x, field.Foreign),
+                            lambda x: isinstance(x, gobpersist.field.Field) \
+                                and not isinstance(x, gobpersist.field.Foreign),
                             self.__dict__.values())] \
                     + ["keys=[%s]" \
                        % ', '.join(["(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
                                                             else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
-                                                                if isinstance(keyelem, field.Field)
+                                                                if isinstance(keyelem, gobpersist.field.Field)
                                                         else repr(keyelem)
                                                         for keyelem in key]) \
                                         for key in self.keys]),
                        "unique_keys=[%s]" \
                        % ', '.join(["(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
                                                             else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
-                                                                if isinstance(keyelem, field.Field) \
+                                                                if isinstance(keyelem, gobpersist.field.Field) \
                                                             else repr(keyelem) \
                                                             for keyelem in key]) \
                                         for key in self.unique_keys])])))
