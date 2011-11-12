@@ -11,6 +11,7 @@ from . import gobkvquerent
 from .. import exception
 from .. import session
 from .. import field
+from gobpersist.backends import cache
 
 class PickleWrapper(object):
     loads = pickle.loads
@@ -20,19 +21,36 @@ class PickleWrapper(object):
         return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
 
+class Acc_Tyrant(pytyrant.Tyrant):
+    '''
+    Wrapper class to create a "Client" class suitable for use
+    with the SimpleThreadMappedPool
+    '''
+    def __init__(self, host='127.0.0.1', port=pytyrant.DEFAULT_PORT,
+                 unix=None, *args, **kwargs):
+        if unix:
+            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            sock.connect(unix)
+        else:
+            sock = socket.socket()
+            sock.connect((host, port))
+            sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, 1)
+        super(Acc_Tyrant, self).__init__(sock)            
+
+default_pool = cache.SimpleThreadMappedPool(client=Acc_Tyrant)            
 class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
     """Gob back end which uses Tokyo Tyrant for storage"""
 
     def __init__(self, host='127.0.0.1', port=pytyrant.DEFAULT_PORT,
-                 unix=None, serializer=PickleWrapper, lock_prefix='_lock'):
-        self.tyrant = None
-        """The tokyo tyrant client for this back end."""
-        if unix is None:
-            self.tyrant = pytyrant.Tyrant.open(host, port)
+                 unix=None, serializer=PickleWrapper, lock_prefix='_lock',
+                 pool=default_pool):
+        
+        if unix:
+            self.tt_args = (unix)
         else:
-            sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            sock.connect(unix)
-            self.tyrant = pytyrant.Tyrant(sock)
+            self.tt_args = ()
+        self.tt_kwargs = {'host':host, 'port':port}
+        self.pool = pool
 
         self.serializer = serializer
         """The serializer for this back end."""
@@ -45,12 +63,13 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
 
     def do_kv_multi_query(self, cls, keys):
         keys = [str(".".join(key)) for key in keys]
-        try:
-            res = self.tyrant.mget(keys)
-        except TyrantError:
-            raise exception.NotFound(
-                "Could not find value for key %s" \
-                    % ".".join(key))
+        with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tyrant:
+            try:
+                res = tyrant.mget(keys)
+            except exception.TyrantError:
+                raise exception.NotFound(
+                    "Could not find value for key %s" \
+                        % ".".join(key))
         keys = set(keys)
         ret = []
         for key, value in res:
@@ -77,12 +96,13 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
         return ret
 
     def do_kv_query(self, cls, key):
-        try:
-            res = self.tyrant.get(str(".".join(key)))
-        except TyrantError:
-            raise exception.NotFound(
-                "Could not find value for key %s" \
-                    % ".".join(key))
+        with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tyrant:
+            try:
+                res = tyrant.get(str(".".join(key)))
+            except exception.TyrantError:
+                raise exception.NotFound(
+                    "Could not find value for key %s" \
+                        % ".".join(key))
         if res == None:
             raise exception.NotFound(
                 "Could not find value for key %s" \
@@ -122,30 +142,32 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
         # Time to sleep between tries
 
         locks_acquired = []
-        while tries > 0:
-            try:
-                for lock in locks:
-                    # Lock the object
-                    self.tyrant.putkeep(lock, '1')
-                    locks_acquired.append(lock)
-            except pytyrant.TyrantError:
-                # The object is locked!
-                # Back out all acquired locks and start over
-                self.release_locks(locks_acquired)
-                locks_acquired = []
-                tries -= 1
-                time.sleep(sleep_time)
-            else:
-                # We acquired all the locks
-                return locks_acquired
+        with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tyrant:
+            while tries > 0:
+                try:
+                    for lock in locks:
+                        # Lock the object
+                        tyrant.putkeep(lock, '1')
+                        locks_acquired.append(lock)
+                except pytyrant.TyrantError:
+                    # The object is locked!
+                    # Back out all acquired locks and start over
+                    self.release_locks(locks_acquired)
+                    locks_acquired = []
+                    tries -= 1
+                    time.sleep(sleep_time)
+                else:
+                    # We acquired all the locks
+                    return locks_acquired
 
-        # We failed to acquire locks after *tries* attempts.  Say a
-        # hail mary and force acquire.
-        self.tyrant.misc("putlist", 0, [item for lock in locks for item in (lock, '1')])
+            # We failed to acquire locks after *tries* attempts.  Say a
+            # hail mary and force acquire.
+            tyrant.misc("putlist", 0, [item for lock in locks for item in (lock, '1')])
 
     def release_locks(self, locks):
         """Releases a set of locks."""
-        self.tyrant.misc("outlist", 0, locks)
+        with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tyrant:
+            tyrant.misc("outlist", 0, locks)
 
     def key_to_mykey(self, key, use_persisted_version=False):
         mykey = super(TokyoTyrantBackend, self).key_to_mykey(key,
@@ -315,37 +337,38 @@ class TokyoTyrantBackend(gobkvquerent.GobKVQuerent):
             for add in to_add:
                 add_multi.append(('.'.join(add[0]), self.serializer.dumps(add[1])))
             # no add_multi??
-            self.tyrant.misc("putlist", 0, [item for tuple_ in add_multi for item in tuple_])
-            c_addsrms_list = self.tyrant.mget(['.'.join(c_add[0]) \
-                                                  for c_add \
-                                                  in itertools.chain(
-                                                      collection_add,
-                                                      collection_remove)])
-            c_addsrms = {}
-            for key, value in c_addsrms_list:
-                c_addsrms[key] \
-                    = set([tuple(path)
-                           for path in self.serializer.loads(value)])
-            for c_add in collection_add:
-                key = '.'.join(c_add[0])
-                if key in c_addsrms:
-                    res = c_addsrms[key]
-                else:
-                    res = c_addsrms[key] = set()
-                res.add(c_add[1])
-            for c_rm in collection_remove:
-                key = '.'.join(c_add[0])
-                if key in c_addsrms:
-                    res = c_addsrms[key]
-                    res.discard(c_rm[1])
-            set_multi = []
-            for k, v in c_addsrms.iteritems():
-                set_multi.append((k, self.serializer.dumps(list(v))))
-            for setting in to_set:
-                set_multi.append(('.'.join(setting[0]),
-                                  self.serializer.dumps(setting[1])))
-            self.tyrant.misc("putlist", 0, [item for tuple_ in set_multi for item in tuple_])
-            self.tyrant.misc("outlist", 0, ['.'.join(delete) for delete in to_delete])
+            with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tyrant:
+                tyrant.misc("putlist", 0, [item for tuple_ in add_multi for item in tuple_])
+                c_addsrms_list = tyrant.mget(['.'.join(c_add[0]) \
+                                                      for c_add \
+                                                      in itertools.chain(
+                                                          collection_add,
+                                                          collection_remove)])
+                c_addsrms = {}
+                for key, value in c_addsrms_list:
+                    c_addsrms[key] \
+                        = set([tuple(path)
+                               for path in self.serializer.loads(value)])
+                for c_add in collection_add:
+                    key = '.'.join(c_add[0])
+                    if key in c_addsrms:
+                        res = c_addsrms[key]
+                    else:
+                        res = c_addsrms[key] = set()
+                    res.add(c_add[1])
+                for c_rm in collection_remove:
+                    key = '.'.join(c_add[0])
+                    if key in c_addsrms:
+                        res = c_addsrms[key]
+                        res.discard(c_rm[1])
+                set_multi = []
+                for k, v in c_addsrms.iteritems():
+                    set_multi.append((k, self.serializer.dumps(list(v))))
+                for setting in to_set:
+                    set_multi.append(('.'.join(setting[0]),
+                                      self.serializer.dumps(setting[1])))
+                tyrant.misc("putlist", 0, [item for tuple_ in set_multi for item in tuple_])
+                tyrant.misc("outlist", 0, ['.'.join(delete) for delete in to_delete])
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)

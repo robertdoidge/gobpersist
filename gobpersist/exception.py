@@ -28,3 +28,7 @@ class Corruption(Exception):
     conflicts with the semantics of the backend or schema which
     interfaces with it."""
     pass
+
+class TyrantError(Exception):
+    """Raises to indicate a problem using the TokyoTyrant connection.
+    """
