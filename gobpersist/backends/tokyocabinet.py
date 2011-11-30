@@ -14,7 +14,6 @@ import jsonpickle
 # implement backend storage caching for user files
 
 KEYFIELD = 'file_handle'
-KEYFIELDa = 'md5sum'
 """the File field we want to use to generate keys, accellion/schema.py"""
 
 default_pool = cache.SimpleThreadMappedPool(client=pyrant.Tyrant)
@@ -22,7 +21,6 @@ default_pool = cache.SimpleThreadMappedPool(client=pyrant.Tyrant)
 def generate_key(gob):
     newkey = getattr(gob, KEYFIELD).value
     newkey = newkey.replace('/', '')
-    newkey += getattr(gob, KEYFIELDa).value
     return newkey
 
 class TokyoCabinetBackend(session.StorageEngine):
