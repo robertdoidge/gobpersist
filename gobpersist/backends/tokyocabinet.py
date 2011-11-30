@@ -13,7 +13,7 @@ import jsonpickle
 # utilizes pyrant, tokyotyrant, tokyocabinet, and minifs.py to
 # implement backend storage caching for user files
 
-KEYFIELD = 'file_id'
+KEYFIELD = 'file_handle'
 """the File field we want to use to generate keys, accellion/schema.py"""
 
 default_pool = cache.SimpleThreadMappedPool(client=pyrant.Tyrant)
