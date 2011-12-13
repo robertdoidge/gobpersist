@@ -13,10 +13,15 @@ import jsonpickle
 # utilizes pyrant, tokyotyrant, tokyocabinet, and minifs.py to
 # implement backend storage caching for user files
 
-KEYFIELD = 'file_id'
+KEYFIELD = 'file_handle'
 """the File field we want to use to generate keys, accellion/schema.py"""
 
 default_pool = cache.SimpleThreadMappedPool(client=pyrant.Tyrant)
+
+def generate_key(gob):
+    newkey = getattr(gob, KEYFIELD).value
+    newkey = newkey.replace('/', '')
+    return newkey
 
 class TokyoCabinetBackend(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
@@ -95,7 +100,9 @@ class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
         """call on the storage to retrieve data"""
         iterable = None
         
-        iterable = self.cache_storage.get(getattr(gob, KEYFIELD).value)
+        file_identifier = generate_key(gob)
+
+        iterable = self.cache_storage.get(file_identifier)
         
         if iterable != -1:
             self.store_permanent_records()
@@ -105,7 +112,7 @@ class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
     
     def upload(self, gob, iterable):
         
-        deleted = self.cache_storage.add(getattr(gob, KEYFIELD).value, iterable, getattr(gob, 'size').value)
+        deleted = self.cache_storage.add(generate_key(gob), iterable, getattr(gob, 'size').value)
         self.remove_deleted(deleted)
 
         self.store_permanent_records()

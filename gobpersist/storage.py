@@ -55,7 +55,7 @@ class Storable(object):
         """Upload data to this object."""
         if getattr(self, 'size', None) is None:
             try:
-                self.size = os.fstat(fp)[7]
+                self.size = os.fstat(fp)[6]
             except:
                 self.size = None
         if self.size is not None:
