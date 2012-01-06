@@ -168,7 +168,9 @@ class GobKVQuerent(gobpersist.session.Backend):
                     key, ordering = ordering.items()[0]
                     if isinstance(ordering, gobpersist.field.Field):
                         ordering = ordering._name
-                    res = cmp(self._get_value(a, (ordering,)), self._get_value(b, (ordering,)))
+                    if not isinstance(ordering, tuple):
+                        ordering = (ordering,)
+                    res = cmp(self._get_value(a, ordering), self._get_value(b, ordering))
                     if res == 0:
                         continue
                     if key == 'asc':

@@ -100,8 +100,9 @@ class GobTranslator(object):
             if key not in ('asc', 'desc'):
                 raise ValueError("Invalid key '%s' in ordering %s" \
                                      % (key, repr(ordering)))
-            if not isinstance(ordering, gobpersist.field.Field):
-                ordering = getattr(cls, ordering)
+            if not isinstance(ordering, tuple):
+                ordering = (ordering,)
+            ordering = self.idnt_to_myidnt(cls, ordering)
             ret.add({key: ordering.name})
         return ret
 
