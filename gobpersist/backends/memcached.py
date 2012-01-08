@@ -7,6 +7,7 @@ import pylibmc
 
 import gobpersist.backends.gobkvquerent
 import gobpersist.backends.pools
+import gobpersist.backends.cache
 import gobpersist.exception
 import gobpersist.field
 
@@ -25,7 +26,7 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
     def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
                  serializer=PickleWrapper, lock_prefix='_lock',
                  pool=default_pool, separator='.', lock_tries=8,
-                 lock_backoff=0.25):
+                 lock_backoff=0.25, *args, **kwargs):
         behaviors = {'ketama': True}
         for key, value in kwargs.iteritems():
             behaviors[key] = value
@@ -396,12 +397,13 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         return []
 
 
-class MemcachedCache(MemcachedBackend, cache.Cache):
+class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
     """A cache backend based on Memcached."""
     def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
                  serializer=PickleWrapper, lock_prefix='_lock',
                  pool=default_pool, separator='.', lock_tries=8,
-                 lock_backoff=0.25, integrity_prefix='_INTEGRITY_'):
+                 lock_backoff=0.25, integrity_prefix='_INTEGRITY_',
+                 *args, **kwargs):
 
         self.integrity_prefix = integrity_prefix
         """A prefix to add to a key to create the integrity key for

@@ -5,7 +5,8 @@ import datetime
 import uuid
 import iso8601
 
-import gobpersist.schema
+# moved to the end to avoid circular dependency
+# import gobpersist.schema
 
 class Field(object):
     """An abstract base class for defining a field type."""
@@ -1019,6 +1020,8 @@ class ForeignCollection(Foreign):
     def fetch_value(self):
         # The import dragons will keep you from doing something more
         # obvious.
+        import gobpersist.schema
+
         local_field = getattr(self.instance, self.local_field)
         if self.key is None:
             return gobpersist.schema.SchemaCollection(

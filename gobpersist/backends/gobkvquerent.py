@@ -14,13 +14,13 @@ class GobKVQuerent(gobpersist.session.Backend):
 
     def _get_value_recursiter(self, gob, arg, path=None):
         """Turn an argument into a value, iterator version."""
-        if not path:
-            path = list(arg)
         if isinstance(arg, tuple):
             # identifier
+            if not path:
+                path = list(arg)
             value = gob
             while path:
-                pathelem = path.pop(0):
+                pathelem = path.pop(0)
                 if not isinstance(value, gobpersist.gob.Gob):
                     raise gobpersist.exception.QueryError("Could not understand " \
                                                               "identifier %s" \
@@ -50,7 +50,7 @@ class GobKVQuerent(gobpersist.session.Backend):
     def _get_value(self, gob, arg):
         """Turn an argument into a value."""
         ret = []
-        for value in _get_value_recursiter(gob, arg):
+        for value in self._get_value_recursiter(gob, arg):
             ret.append(value)
         if not ret:
             raise gobpersist.exception.QueryError("Could not understand " \
