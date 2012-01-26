@@ -151,7 +151,7 @@ class Partition(object):
 	try:
             fp_to_disk = open(path, 'wb')
 	except IOError:
-	    print "Could not open path for file ' + identifier + '.'
+	    print "Could not open path for file " + identifier + '.'
 	    return -1
         tempstr = ""
         

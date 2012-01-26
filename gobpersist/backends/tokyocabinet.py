@@ -33,24 +33,26 @@ class TokyoCabinetBackend(session.StorageEngine):
         self.pool = pool
 
         """tokyo cabinet client"""
+	self.cache_space = 0
         self.filerecord_cache = []
         self.sizerecord_cache = {}
-        self.cache_spaceleft = 0
+        self.cache_space_left = 0
 
         self.filecache_directory = cachepath
         """directories for storage"""
 
         self.filecache_size = cachesize
-        """sizes of storage containers"""
+        """sizes of storage container"""
 
         self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.filecache_size)
         """temporary disk storage"""        
 
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
             try:
+	    	self.cache_space = jsonpickle.decode(tt['cache_space'])
                 self.filerecord_cache = jsonpickle.decode(tt['filerec_cache'])
                 self.sizerecord_cache = jsonpickle.decode(tt['sizerec_cache'])
-                self.cache_spaceleft = jsonpickle.decode(tt['cachespace'])
+                self.cache_space_left = jsonpickle.decode(tt['cache_space_left'])
             except KeyError:
                 print 'this is the first time setting up this storage engine.'
                 #FIXME: should we be storing the default params in TC to avoid another key miss?
@@ -58,9 +60,12 @@ class TokyoCabinetBackend(session.StorageEngine):
                 self.filerecord_cache = -1
                         
         if self.filerecord_cache != -1:
+	    if cachesize != self.cache_space:
+	        self.cache_space = cachesize
+	    self.cache_storage.partsize = self.cache_space
             self.cache_storage.recordregistry = self.filerecord_cache
             self.cache_storage.sizeregistry = self.sizerecord_cache
-            self.cache_storage.partremsize = self.cache_spaceleft
+            self.cache_storage.partremsize = self.cache_space_left
 
     def clean_directory(self):
         for elem in os.listdir(self.filecache_directory):
@@ -94,7 +99,7 @@ class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
             tt['filerec_cache'] = jsonpickle.encode(self.cache_storage.recordregistry)
             tt['sizerec_cache'] = jsonpickle.encode(self.cache_storage.sizeregistry)
-            tt['cachespace'] = jsonpickle.encode(self.cache_storage.partremsize)
+            tt['cache_space_left'] = jsonpickle.encode(self.cache_storage.partremsize)
     
     def download(self, gob):
         """call on the storage to retrieve data"""
