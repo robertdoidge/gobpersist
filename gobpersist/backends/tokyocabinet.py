@@ -54,7 +54,6 @@ class TokyoCabinetBackend(session.StorageEngine):
                 self.sizerecord_cache = jsonpickle.decode(tt['sizerec_cache'])
                 self.cache_space_left = jsonpickle.decode(tt['cache_space_left'])
             except KeyError:
-                print 'this is the first time setting up this storage engine.'
                 #FIXME: should we be storing the default params in TC to avoid another key miss?
                 self.clean_directory()
                 self.filerecord_cache = -1
