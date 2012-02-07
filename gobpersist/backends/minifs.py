@@ -10,7 +10,7 @@ import uuid
 class Partition(object):
     """region on disk to store files"""
     
-    def __init__(self, path=u'/home/admin/accellion_filestore', capacity=2000):
+    def __init__(self, path=u'accellion_filestore', capacity=2000):
 
         self.partdir = path
         """partition directory"""
@@ -82,7 +82,7 @@ class Partition(object):
             print 'Not enough space to store file ' + repr(identifier) + '.'
             return -1
         if self.search(identifier) > -1:
-            self.remove(identifer)
+            self.remove(identifier)
         
         self.sizeregistry[identifier] = file_size
         self.partremsize = self.partremsize - file_size
@@ -100,10 +100,25 @@ class Partition(object):
         if self.search(identifier) is not -1:
             if identifier not in self.filelocks:
                 path = self.generate_file_handle(identifier)
-                self.partremsize = self.partremsize + self.sizeregistry[identifier]
-                self.recordregistry.remove(identifier)
-                del self.sizeregistry[identifier]
-                os.remove(path)
+                try:
+                    self.partremsize = self.partremsize + self.sizeregistry[identifier]
+                except KeyError:
+                    print 'Corrupted partition size record.'
+
+                try:
+                    self.recordregistry.remove(identifier)
+                except ValueError:
+                    print 'Corrupted partition file record.'
+
+                try:
+                    del self.sizeregistry[identifier]
+                except KeyError:
+                    print 'If the size record dict lookup failed here, it should have failed before when calculating remaining partition size.'  
+
+                try:
+                    os.remove(path)
+                except OSError:
+                    print "Serious problem, path to this cached file doesn't exist."
                 print 'File ' + repr(identifier) + ' successfully removed.'
                 return 0
             print 'File in use, could not be removed.'
@@ -133,7 +148,11 @@ class Partition(object):
         """writes a file to disk, returns 1 if everything went good"""
         
         path = self.generate_file_handle(identifier)
-        fp_to_disk = open(path, 'wb')
+        try:
+            fp_to_disk = open(path, 'wb')
+        except IOError:
+            print "Could not open path for file " + repr(identifier) + '.'
+            return -1
         tempstr = ""
         
         #file object iteration
@@ -174,7 +193,6 @@ class Partition(object):
 
 class MRUPreserve(Partition):
     """Nature preserve for unique, free-roaming most-recently-used files"""
-    #but we shall quickly eradicate files we find unuseful and idle
 
     def __init__(self, path=u'/home/admin/accellion_filestore', capacity=2000):
         super(MRUPreserve, self).__init__(path, capacity)
@@ -205,7 +223,7 @@ class MRUPreserve(Partition):
         if file_size >= self.partremsize:
             deleted = self.assess_removals(identifier, file_size)
         if self.search(identifier) > -1:
-            self.update(identifer, fp)
+            self.update(identifier, fp)
             return deleted
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
@@ -230,7 +248,11 @@ class MRUPreserve(Partition):
         file_index = self.search(identifier)
         if file_index > -1:
             path = self.generate_file_handle(identifier)
-            fp = open(path, 'rb')
+            try:
+                fp = open(path, 'rb')
+            except IOError:
+                print 'Could not get() associated file ' + identifier + ' from disk.'
+                return -1
             self.pop_and_insert(identifier)
             return fp
         print 'File not found in ' + self.__class__.__name__
@@ -263,7 +285,7 @@ class MRUGobPreserve(MRUPreserve):
         if file_size >= self.partremsize:
             deleted = self.assess_removals(identifier, file_size)
         if self.search(identifier) > -1:
-            self.update(identifer, fp)
+            self.update(identifier, fp)
             return deleted
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
