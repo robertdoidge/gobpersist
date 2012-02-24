@@ -63,7 +63,7 @@ class Partition(object):
             path = self.generate_file_handle(identifier)
             try:
                 fp = open(path, 'rb')
-            except IOError:
+            except IOError, e:
                 fp = -1
             return fp
         print 'File not found in ' + self.__class__.__name__
@@ -149,7 +149,7 @@ class Partition(object):
         
         path = self.generate_file_handle(identifier)
         try:
-            fp_to_disk = open(path, 'wb')
+            fp_to_disk = open(path.encode('utf-8'), 'wb')
         except IOError:
             print "Could not open path for file " + repr(identifier) + '.'
             return -1
