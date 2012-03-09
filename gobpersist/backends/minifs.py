@@ -48,8 +48,8 @@ class Partition(object):
     def search(self, identifier):
         """returns index if record is in file system"""
 
-        if identifier in self.recordregistry:
-            recindx = self.recordregistry.index(identifier)
+        if identifier.encode('utf-8') in self.recordregistry:
+            recindx = self.recordregistry.index(identifier.encode('utf-8'))
             if identifier in os.listdir(self.partdir):               
                 print 'Found record ' + repr(identifier) + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
                 return recindx
@@ -64,7 +64,9 @@ class Partition(object):
             try:
                 fp = open(path, 'rb')
             except IOError, e:
-                fp = -1
+                for elem in e:
+                    print elem
+                return -1
             return fp
         print 'File not found in ' + self.__class__.__name__
         return -1
@@ -89,7 +91,7 @@ class Partition(object):
         self.filelocks.add(identifier)
         self.write_disk(identifier, fp)
         self.filelocks.remove(identifier)
-        self.recordregistry.insert(0, identifier)
+        self.recordregistry.insert(0, identifier.encode('utf-8'))
         print 'inserting ' + repr(identifier)
         print 'File ' + repr(identifier) + ' successfully stored.'
         return fp
@@ -106,7 +108,7 @@ class Partition(object):
                     print 'Corrupted partition size record.'
 
                 try:
-                    self.recordregistry.remove(identifier)
+                    self.recordregistry.remove(identifier.encode('utf-8'))
                 except ValueError:
                     print 'Corrupted partition file record.'
 
@@ -149,6 +151,7 @@ class Partition(object):
         
         path = self.generate_file_handle(identifier)
         try:
+            print path.encode('utf-8')
             fp_to_disk = open(path.encode('utf-8'), 'wb')
         except IOError:
             print "Could not open path for file " + repr(identifier) + '.'
@@ -261,11 +264,11 @@ class MRUPreserve(Partition):
     def pop_and_insert(self, identifier):
         """helper method to reposition an element in a list"""
         try:
-            self.recordregistry.pop(self.recordregistry.index(identifier))
+            self.recordregistry.pop(self.recordregistry.index(identifier.encode('utf-8')))
         except ValueError:
             #That just means item hasn't been cached recently.  Continue insert!
             pass
-        self.recordregistry.insert(0, identifier)
+        self.recordregistry.insert(0, identifier.encode('utf-8'))
 
 class MRUGobPreserve(MRUPreserve):
     """Exact same thing as MRUPreserve, but overwritten add() method allows use of iterables"""

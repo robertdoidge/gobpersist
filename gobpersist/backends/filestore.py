@@ -4,8 +4,6 @@ from gobpersist import session
 from accellion import gobphpapi
 from wsgiref.util import FileWrapper
 
-import acclogger
-
 class FileStorageBackend(session.StorageEngine):
 
     def __init__(self, storage_engine=None, cache=None):
@@ -27,8 +25,8 @@ class FileStorageBackend(session.StorageEngine):
             (gob2, iterable) = self.storage_engine.download(gob)
             self.cache.upload(gob, iterable)
             (gob2, iterable) = self.cache.download(gob)
-	    if iterable == -1:
-	        (gob2, iterable) = self.storage_engine.download(gob)	     
+        if iterable == -1:
+            (gob2, iterable) = self.storage_engine.download(gob)
         return (gob2, iterable)
 
     def upload_iter(self, gob, iterable):

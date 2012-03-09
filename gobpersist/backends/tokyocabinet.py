@@ -68,7 +68,7 @@ class TokyoCabinetBackend(session.StorageEngine):
 
     def clean_directory(self):
         for elem in os.listdir(self.filecache_directory):
-            path = os.path.join(self.filecache_directory, elem)
+            path = os.path.join(self.filecache_directory.encode('utf-8'), elem)
             try:
                 os.unlink(path)
             except Exception, e:
