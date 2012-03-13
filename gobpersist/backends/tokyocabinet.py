@@ -41,10 +41,6 @@ class TokyoCabinetBackend(session.StorageEngine):
         self.filecache_directory = cachepath
         """directories for storage"""
 
-        self.filecache_size = cachesize
-        """sizes of storage container"""
-
-        self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.filecache_size)
         """temporary disk storage"""        
 
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
@@ -58,17 +54,20 @@ class TokyoCabinetBackend(session.StorageEngine):
                 self.clean_directory()
                 self.filerecord_cache = -1
                         
+        if cachesize != self.cache_space:
+            self.cache_space = cachesize
+
+        self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.cache_space)
         if self.filerecord_cache != -1:
-	    if cachesize != self.cache_space:
-	        self.cache_space = cachesize
-	    self.cache_storage.partsize = self.cache_space
             self.cache_storage.recordregistry = self.filerecord_cache
             self.cache_storage.sizeregistry = self.sizerecord_cache
             self.cache_storage.partremsize = self.cache_space_left
 
     def clean_directory(self):
         for elem in os.listdir(self.filecache_directory):
-            path = os.path.join(self.filecache_directory, elem)
+            print repr(self.filecache_directory)
+            print repr(elem)
+            path = os.path.join(self.filecache_directory.encode('utf-8'), elem)
             try:
                 os.unlink(path)
             except Exception, e:
@@ -96,6 +95,7 @@ class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
     def store_permanent_records(self):
         """in case of a system halt, recall saved file information"""
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
+            tt['cache_space'] = jsonpickle.encode(self.cache_storage.partsize)
             tt['filerec_cache'] = jsonpickle.encode(self.cache_storage.recordregistry)
             tt['sizerec_cache'] = jsonpickle.encode(self.cache_storage.sizeregistry)
             tt['cache_space_left'] = jsonpickle.encode(self.cache_storage.partremsize)
