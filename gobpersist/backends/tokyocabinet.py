@@ -8,6 +8,7 @@ import pyrant
 import uuid
 
 import jsonpickle
+import acclogger
 
 # tokyocabinet.py
 # utilizes pyrant, tokyotyrant, tokyocabinet, and minifs.py to
@@ -41,6 +42,10 @@ class TokyoCabinetBackend(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
     def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000, cachepercent=0, resizetolerance=0, pool=default_pool):
 
+        self.logger = acclogger.AccellionLogger(namespace=__name__)
+        self.logger.setupLogger()
+        """logger setup"""
+
         self.tt_args = ()
         self.tt_kwargs = {'host':server, 'port':port}
         self.pool = pool
@@ -70,6 +75,7 @@ class TokyoCabinetBackend(session.StorageEngine):
         partition_size = determine_partition_size(cachesize, cachepercent, resizetolerance)
         if partition_size != self.cache_space:
             self.cache_space = partition_size
+            self.logger.debug("File cache partition size will be resized to " + str(self.cache_space) + 'megabytes')
 
         self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.cache_space)
         if self.filerecord_cache != -1:
@@ -111,6 +117,10 @@ class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
             tt['filerec_cache'] = jsonpickle.encode(self.cache_storage.recordregistry)
             tt['sizerec_cache'] = jsonpickle.encode(self.cache_storage.sizeregistry)
             tt['cache_space_left'] = jsonpickle.encode(self.cache_storage.partremsize)
+            self.logger.debug('\n____Storing file cache state____')
+            self.logger.debug('Total capacity: ' + str(self.cache_space))
+            self.logger.debug('Remaining Capacity: ' + str(self.cache_storage.partremsize))
+            self.logger.debug('Number of items in cache: ' + str(len(self.cache_storage.recordregistry)))
     
     def download(self, gob):
         """call on the storage to retrieve data"""

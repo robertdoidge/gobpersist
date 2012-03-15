@@ -4,6 +4,8 @@ import os,sys
 import pyrant
 import uuid
 
+import acclogger
+
 # minifs.py
 # an exceedingly basic mfs-ish filesystem-ish api
 
@@ -11,6 +13,10 @@ class Partition(object):
     """region on disk to store files"""
     
     def __init__(self, path=u'accellion_filestore', capacity=2000):
+
+        self.logger = acclogger.AccellionLogger(namespace=__name__)
+        self.logger.setupLogger()
+        """logger setup"""
 
         self.partdir = path
         """partition directory"""
@@ -51,7 +57,7 @@ class Partition(object):
         if identifier.encode('utf-8') in self.recordregistry:
             recindx = self.recordregistry.index(identifier.encode('utf-8'))
             if identifier in os.listdir(self.partdir):               
-                print 'Found record ' + repr(identifier) + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.'
+                self.logger.debug('Found record ' + repr(identifier) + ' at ' + str(recindx) + ' in ' + self.__class__.__name__ + '.')
                 return recindx
             self.recordregistry.pop(recindx)
         return -1
@@ -65,7 +71,7 @@ class Partition(object):
                 fp = open(path, 'rb')
             except IOError, e:
                 for elem in e:
-                    print elem
+                    self.logger.error(elem)
                 return -1
             return fp
         print 'File not found in ' + self.__class__.__name__
@@ -78,10 +84,10 @@ class Partition(object):
         file_size = os.fstat(fp.fileno())[6]
 
         if file_size >= self.partsize:
-            print 'File ' + repr(identifier) + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
+            self.logger.debug('File ' + repr(identifier) + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes')
             return -1
         if file_size >= self.partremsize:
-            print 'Not enough space to store file ' + repr(identifier) + '.'
+            self.logger.debug('Not enough space to store file ' + repr(identifier) + '.')
             return -1
         if self.search(identifier) > -1:
             self.remove(identifier)
@@ -92,8 +98,8 @@ class Partition(object):
         self.write_disk(identifier, fp)
         self.filelocks.remove(identifier)
         self.recordregistry.insert(0, identifier.encode('utf-8'))
-        print 'inserting ' + repr(identifier)
-        print 'File ' + repr(identifier) + ' successfully stored.'
+        self.logger.info('inserting ' + repr(identifier))
+        self.logger.info('File ' + repr(identifier) + ' successfully stored.')
         return fp
   
     def remove(self, identifier):
@@ -105,12 +111,12 @@ class Partition(object):
                 try:
                     self.partremsize = self.partremsize + self.sizeregistry[identifier]
                 except KeyError:
-                    print 'Corrupted partition size record.'
+                    self.logger.error('Corrupted partition size record.')
 
                 try:
                     self.recordregistry.remove(identifier.encode('utf-8'))
                 except ValueError:
-                    print 'Corrupted partition file record.'
+                    self.logger.error('Corrupted partition file record.')
 
                 try:
                     del self.sizeregistry[identifier]
@@ -120,12 +126,12 @@ class Partition(object):
                 try:
                     os.remove(path)
                 except OSError:
-                    print "Serious problem, path to this cached file doesn't exist."
-                print 'File ' + repr(identifier) + ' successfully removed.'
+                    self.logger.error("Serious problem, path to this cached file doesn't exist.")
+                self.logger.info('File ' + repr(identifier) + ' successfully removed.')
                 return 0
-            print 'File in use, could not be removed.'
+            self.logger.error('File in use, could not be removed.')
             return -1
-        print 'Could not find file ' + repr(identifier) + '.'
+        self.logger.error('Could not find file ' + repr(identifier) + '.')
         return  -1
     
     def update(self, identifier, fp):
@@ -187,7 +193,7 @@ class Partition(object):
             fp.close()
             return data
         except IOError:
-            print 'Could not read file from disk.'
+            self.logger.error('Could not read file from disk.')
             return -1
 
     def empty_storage(self):
@@ -221,7 +227,7 @@ class MRUPreserve(Partition):
         file_size = os.fstat(fp.fileno())[6]
         self.sizeregistry[identifier] = file_size
         if file_size >= self.partsize:
-            print 'File ' + repr(identifier) + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
+            self.logger.debug('File ' + repr(identifier) + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes')
             return -1
         if file_size >= self.partremsize:
             deleted = self.assess_removals(identifier, file_size)
@@ -231,8 +237,8 @@ class MRUPreserve(Partition):
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
         self.pop_and_insert(identifier)
-        print 'inserting ' + repr(identifier)
-        print 'File ' + repr(identifier) + ' successfully stored.'
+        self.logger.debug('inserting ' + repr(identifier))
+        self.logger.info('File ' + repr(identifier) + ' successfully stored.')
         return deleted
 
     def update(self, identifier, fp):
@@ -241,9 +247,9 @@ class MRUPreserve(Partition):
         if self.search(identifier) is not -1:    
             self.remove(identifier)
             deleted = self.add(identifier, fp)
-            print 'File ' + repr(identifier) + ' successfully updated.'
+            self.logger.debug('File ' + repr(identifier) + ' successfully updated.')
             return deleted
-        print 'Could not find file ' + repr(identifier) + '.'
+        self.logger.error('Could not find file ' + repr(identifier) + '.')
         return -1
 
     def get(self, identifier):
@@ -254,11 +260,11 @@ class MRUPreserve(Partition):
             try:
                 fp = open(path, 'rb')
             except IOError:
-                print 'Could not get() associated file ' + identifier + ' from disk.'
+                self.logger.info('Could not get() associated file ' + identifier + ' from disk.')
                 return -1
             self.pop_and_insert(identifier)
             return fp
-        print 'File not found in ' + self.__class__.__name__
+        self.logger.debug('File not found in ' + self.__class__.__name__)
         return -1
     
     def pop_and_insert(self, identifier):
@@ -283,7 +289,7 @@ class MRUGobPreserve(MRUPreserve):
         file_size = size
         self.sizeregistry[identifier] = file_size
         if file_size >= self.partsize:
-            print 'File ' + repr(identifier) + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes'
+            self.logger.debug('File ' + repr(identifier) + ' too large to store. Capacity: ' + str(self.partsize) + 'bytes')
             return -1
         if file_size >= self.partremsize:
             deleted = self.assess_removals(identifier, file_size)
@@ -293,7 +299,7 @@ class MRUGobPreserve(MRUPreserve):
         self.partremsize = self.partremsize - file_size
         self.write_disk(identifier, fp)
         self.pop_and_insert(identifier)
-        print 'inserting ' + repr(identifier)
-        print 'File ' + repr(identifier) + ' successfully stored.'
+        self.logger.debug('inserting ' + repr(identifier))
+        self.logger.info('File ' + repr(identifier) + ' successfully stored.')
         return deleted
 
