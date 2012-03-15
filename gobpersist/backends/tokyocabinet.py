@@ -23,11 +23,24 @@ def generate_key(gob):
     newkey = newkey.replace('/', '')
     return newkey
 
+def determine_partition_size(cachespace, cachepercent, resizetolerance):
+    #zero's from .ini files need to be compared as strings/characters otherwise conditionals fail
+  
+    if( ((cachespace != '0') and (cachepercent == '0')) or ((cachesize == '0') and (cachepercent != '0'))):
+        if cachespace == '0':
+            #once implemented, we'll determine the amount of space the partition should take up ased on a percentage of the available disk space
+            partition_size = cachesize
+        else:
+            partition_size = cachespace
+    else:
+        print "Partition size is both defined in megabytes and hd percentage. Please only define one preference and set the alternate to '0'."
+
+    return partition_size
+
 class TokyoCabinetBackend(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
-    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000,
-                 pool=default_pool):
-        
+    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000, cachepercent=0, resizetolerance=0, pool=default_pool):
+
         self.tt_args = ()
         self.tt_kwargs = {'host':server, 'port':port}
         self.pool = pool
@@ -53,9 +66,10 @@ class TokyoCabinetBackend(session.StorageEngine):
                 #FIXME: should we be storing the default params in TC to avoid another key miss?
                 self.clean_directory()
                 self.filerecord_cache = -1
-                        
-        if cachesize != self.cache_space:
-            self.cache_space = cachesize
+            
+        partition_size = determine_partition_size(cachesize, cachepercent, resizetolerance)
+        if partition_size != self.cache_space:
+            self.cache_space = partition_size
 
         self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.cache_space)
         if self.filerecord_cache != -1:
@@ -65,8 +79,6 @@ class TokyoCabinetBackend(session.StorageEngine):
 
     def clean_directory(self):
         for elem in os.listdir(self.filecache_directory):
-            print repr(self.filecache_directory)
-            print repr(elem)
             path = os.path.join(self.filecache_directory.encode('utf-8'), elem)
             try:
                 os.unlink(path)
@@ -84,8 +96,8 @@ class TokyoCabinetBackend(session.StorageEngine):
 
 class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
     
-    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000):    
-        super(TokyoCabinetCache, self).__init__(server, port, cachepath, cachesize)
+    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000, cachepercent=0, resizetolerance=0):    
+        super(TokyoCabinetCache, self).__init__(server, port, cachepath, cachesize, cachepercent, resizetolerance)
         
     def remove_deleted(self, deleted):
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
