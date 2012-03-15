@@ -30,12 +30,11 @@ def determine_partition_size(cachespace, cachepercent, resizetolerance):
     if( ((cachespace != '0') and (cachepercent == '0')) or ((cachesize == '0') and (cachepercent != '0'))):
         if cachespace == '0':
             #once implemented, we'll determine the amount of space the partition should take up ased on a percentage of the available disk space
-            partition_size = cachesize
+            partition_size = cachespace
         else:
             partition_size = cachespace
     else:
         print "Partition size is both defined in megabytes and hd percentage. Please only define one preference and set the alternate to '0'."
-
     return partition_size
 
 class TokyoCabinetBackend(session.StorageEngine):
@@ -75,6 +74,7 @@ class TokyoCabinetBackend(session.StorageEngine):
         partition_size = determine_partition_size(cachesize, cachepercent, resizetolerance)
         if partition_size != self.cache_space:
             self.cache_space = partition_size
+            self.logger.debug("cache_space: " + str(self.cache_space) + " partition_size: " + str(partition_size))
             self.logger.debug("File cache partition size will be resized to " + str(self.cache_space) + 'megabytes')
 
         self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.cache_space)
