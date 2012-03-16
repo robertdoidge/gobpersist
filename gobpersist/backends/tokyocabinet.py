@@ -27,8 +27,8 @@ def generate_key(gob):
 def determine_partition_size(cachespace, cachepercent, resizetolerance):
     #zero's from .ini files need to be compared as strings/characters otherwise conditionals fail
   
-    if( ((cachespace != '0') and (cachepercent == '0')) or ((cachesize == '0') and (cachepercent != '0'))):
-        if cachespace == '0':
+    if( ((cachespace != 0) and (cachepercent == 0)) or ((cachespace == 0) and (cachepercent != 0))):
+        if cachespace == 0:
             #once implemented, we'll determine the amount of space the partition should take up ased on a percentage of the available disk space
             partition_size = cachespace
         else:
@@ -36,6 +36,15 @@ def determine_partition_size(cachespace, cachepercent, resizetolerance):
     else:
         print "Partition size is both defined in megabytes and hd percentage. Please only define one preference and set the alternate to '0'."
     return partition_size
+
+def determine_remaining_partsize(oldspace, newspace, remspace):
+    """determines remaining amount of cache space after a resize"""
+    if (oldspace - remspace) > newspace:
+        return 0
+    elif (oldspace - remspace) == newspace:
+        return  0
+    else:
+        return (newspace - (oldspace - remspace))
 
 class TokyoCabinetBackend(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
@@ -62,20 +71,29 @@ class TokyoCabinetBackend(session.StorageEngine):
 
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
             try:
-	    	self.cache_space = jsonpickle.decode(tt['cache_space'])
+	    	self.cache_space = int(jsonpickle.decode(tt['cache_space']))
                 self.filerecord_cache = jsonpickle.decode(tt['filerec_cache'])
                 self.sizerecord_cache = jsonpickle.decode(tt['sizerec_cache'])
-                self.cache_space_left = jsonpickle.decode(tt['cache_space_left'])
+                self.cache_space_left = int(jsonpickle.decode(tt['cache_space_left']))
             except KeyError:
                 #FIXME: should we be storing the default params in TC to avoid another key miss?
                 self.clean_directory()
                 self.filerecord_cache = -1
-            
-        partition_size = determine_partition_size(cachesize, cachepercent, resizetolerance)
+
+        #makes sure values passed from configuration are numbers
+        partition_size = determine_partition_size(int(cachesize), int(cachepercent), int(resizetolerance))
         if partition_size != self.cache_space:
+            print self.cache_space
+            print partition_size
+            print self.cache_space_left
+            self.cache_space_left = determine_remaining_partsize(self.cache_space, partition_size, self.cache_space_left)
+            if(self.cache_space_left == 0):
+                self.filerecord_cache = []
+                self.sizerecord_cache = {}
+                self.clean_directory()
             self.cache_space = partition_size
             self.logger.debug("cache_space: " + str(self.cache_space) + " partition_size: " + str(partition_size))
-            self.logger.debug("File cache partition size will be resized to " + str(self.cache_space) + 'megabytes')
+            self.logger.debug("File cache partition size will be resized to " + str(self.cache_space))
 
         self.cache_storage = minifs.MRUGobPreserve(self.filecache_directory, self.cache_space)
         if self.filerecord_cache != -1:
