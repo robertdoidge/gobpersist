@@ -27,7 +27,7 @@ def generate_key(gob):
 def determine_partition_size(cachespace, cachepercent, resizetolerance):
     #zero's from .ini files need to be compared as strings/characters otherwise conditionals fail
   
-    if( ((cachespace != '0') and (cachepercent == '0')) or ((cachesize == '0') and (cachepercent != '0'))):
+    if( ((cachespace != '0') and (cachepercent == '0')) or ((cachespace == '0') and (cachepercent != '0'))):
         if cachespace == '0':
             #once implemented, we'll determine the amount of space the partition should take up ased on a percentage of the available disk space
             partition_size = cachespace
@@ -39,7 +39,8 @@ def determine_partition_size(cachespace, cachepercent, resizetolerance):
 
 class TokyoCabinetBackend(session.StorageEngine):
     """TokyoTyrant client and TokyoCabinet dbm for storage control"""
-    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000, cachepercent=0, resizetolerance=0, pool=default_pool):
+    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000,
+                 cachepercent=0, resizetolerance=0, pool=default_pool):
 
         self.logger = acclogger.AccellionLogger(namespace=__name__)
         self.logger.setupLogger()
@@ -50,7 +51,7 @@ class TokyoCabinetBackend(session.StorageEngine):
         self.pool = pool
 
         """tokyo cabinet client"""
-	self.cache_space = 0
+        self.cache_space = 0
         self.filerecord_cache = []
         self.sizerecord_cache = {}
         self.cache_space_left = 0
@@ -62,7 +63,7 @@ class TokyoCabinetBackend(session.StorageEngine):
 
         with self.pool.reserve(*self.tt_args, **self.tt_kwargs) as tt:
             try:
-	    	self.cache_space = jsonpickle.decode(tt['cache_space'])
+                self.cache_space = jsonpickle.decode(tt['cache_space'])
                 self.filerecord_cache = jsonpickle.decode(tt['filerec_cache'])
                 self.sizerecord_cache = jsonpickle.decode(tt['sizerec_cache'])
                 self.cache_space_left = jsonpickle.decode(tt['cache_space_left'])
@@ -102,7 +103,8 @@ class TokyoCabinetBackend(session.StorageEngine):
 
 class TokyoCabinetCache(TokyoCabinetBackend, session.StorageEngine):
     
-    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000, cachepercent=0, resizetolerance=0):    
+    def __init__(self, server='127.0.0.1', port=1978, cachepath='accellion_cache', cachesize=2000,
+                 cachepercent=0, resizetolerance=0):    
         super(TokyoCabinetCache, self).__init__(server, port, cachepath, cachesize, cachepercent, resizetolerance)
         
     def remove_deleted(self, deleted):
