@@ -214,6 +214,9 @@ class MRUPreserve(Partition):
         if file_size >= self.partremsize:
         #start kickin out old data
             while file_size >= self.partremsize:
+                if(len(self.recordregistry) == 0):
+                    self.partremsize = self.partsize
+                    return []
                 currentid = self.recordregistry[ -1 ]
                 self.remove(currentid)
                 deleted_list.append(currentid)
