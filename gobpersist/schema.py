@@ -1,6 +1,5 @@
-from __future__ import absolute_import
-from . import gob
-from . import field
+import gobpersist.gob
+import gobpersist.field
 
 class SchemaCollection(object):
     """An object representing a collection in a given schema.
@@ -87,7 +86,7 @@ class SchemaCollection(object):
         """Get an item with a specific primary key."""
         key = []
         for keyelem in self.cls.obj_key:
-            if isinstance(keyelem, field.Field) \
+            if isinstance(keyelem, gobpersist.field.Field) \
                     and keyelem.primary_key:
                 f = keyelem.clone(clean_break=True)
                 f.set(primary_key)
@@ -106,7 +105,7 @@ class SchemaCollection(object):
         gob.session = self.session
         if self.autoset is not None:
             for key, value in self.autoset.iteritems():
-                if isinstance(value, field.Field):
+                if isinstance(value, gobpersist.field.Field):
                     setattr(gob, key, value.value)
                 else:
                     setattr(gob, key, value)
@@ -157,7 +156,7 @@ class Schema(object):
         for name in dir(self):
             collection = getattr(self, name)
             if isinstance(collection, type) \
-                    and issubclass(collection, gob.Gob):
+                    and issubclass(collection, gobpersist.gob.Gob):
                 setattr(self, name, SchemaCollection(cls=collection,
                                                      session=session,
                                                      key=collection.coll_key))

@@ -1,4 +1,12 @@
 class NotFound(Exception):
+    """Raised when a query key or subkey is not found.
+
+    This condition is different than an empty result.  For instance,
+    if one queries on a key, but that key is missing, a NotFound
+    exception is thrown, but if one queries on a key, and that key is
+    present, though no objects are stored in it, and empty list is
+    returned.
+    """
     pass
 
 class ConditionFailed(Exception):
@@ -20,7 +28,3 @@ class Corruption(Exception):
     conflicts with the semantics of the backend or schema which
     interfaces with it."""
     pass
-
-class TyrantError(Exception):
-    """Raises to indicate a problem using the TokyoTyrant connection.
-    """

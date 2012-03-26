@@ -8,10 +8,14 @@ class SizeFile(object):
     def __init__(self, storable, fp):
         self.fp = fp
         self.storable = storable
+
     def read(self, size):
         ret = self.fp.read(size)
         self.storable.size += len(ret)
         return ret
+
+    def __getattr__(self, name):
+        return getattr(self.fp, name)
 
 
 class LimitedFile(object):
@@ -21,6 +25,7 @@ class LimitedFile(object):
     def __init__(self, storable, fp):
         self.fp = fp
         self.remaining = storable.size.value
+
     def read(self, size):
         if not self.remaining:
             return ""
@@ -30,6 +35,9 @@ class LimitedFile(object):
             ret = self.fp.read(size)
         self.remaining -= len(ret)
         return ret
+
+    def __getattr__(self, name):
+        return getattr(self.fp, name)
 
 
 class Storable(object):
@@ -45,12 +53,12 @@ class Storable(object):
 
     def upload(self, fp):
         """Upload data to this object."""
-        if not getattr(self, 'size', False):
+        if getattr(self, 'size', None) is None:
             try:
                 self.size = os.fstat(fp)[6]
             except:
-                self.size = 0
-        if self.size:
+                self.size = None
+        if self.size is not None:
             fp = LimitedFile(self, fp)
         else:
             fp = SizeFile(self, fp)
@@ -58,7 +66,7 @@ class Storable(object):
 
     def upload_iter(self, upload_iter):
         """Upload data to this object, iterable version."""
-        if not getattr(self, 'size', False):
+        if getattr(self, 'size', None) is None:
             self.size = 0
             def wrapped_upload_iter():
                 for r in upload_iter:
@@ -79,10 +87,14 @@ class MD5File(object):
     def __init__(self, md5, fp):
         self.fp = fp
         self.md5 = md5
+
     def read(self, size):
         ret = self.fp.read(size)
         self.md5.update(ret)
         return ret
+
+    def __getattr__(self, name):
+        return getattr(self.fp, name)
 
 
 class MD5Storable(Storable):

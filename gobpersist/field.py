@@ -1,12 +1,12 @@
-from __future__ import absolute_import
-# Moved to the middle of a function to avoid cyclical dependency
-# from . import schema
 import re
 from copy import copy as base_clone
 import operator
 import datetime
 import uuid
 import iso8601
+
+# moved to the end to avoid circular dependency
+# import gobpersist.schema
 
 class Field(object):
     """An abstract base class for defining a field type."""
@@ -21,7 +21,8 @@ class Field(object):
         """Indicates that this field must be unique."""
 
         self.default = default
-        """Callable or scalar indicating the default value for this field."""
+        """Callable or scalar indicating the default value for this
+        field."""
 
         self.default_update = default_update
         """Callable indicating a transformation to perform on
@@ -35,20 +36,21 @@ class Field(object):
         """Indicates whether this field should be considered a
         revision tag or not.
 
-        A revision tag must be unchanged between reading the object and
-        updating/removing the object.
+        A revision tag must be unchanged between reading the object
+        and updating/removing the object.
         """
 
         self.primary_key = primary_key
-        """Indicates whether or not this field is the primary key for this
-        object."""
+        """Indicates whether or not this field is the primary key for
+        this object."""
 
         self.modifiable = modifiable
-        """Indicates whether or not this field can be modified for update."""
+        """Indicates whether or not this field can be modified for
+        update."""
 
         self.name = name
-        """Hints at the name of this field, if different from the variable name
-        that refers to it."""
+        """Hints at the name of this field, if different from the
+        variable name that refers to it."""
 
         self.instance_key = None
         """The key used to store data on the instance."""
@@ -59,9 +61,9 @@ class Field(object):
         self.immutable = False
         """Indicates that this field has become immutable.
         
-        This will be set True when the hash() function is called on this object,
-        whether explicitly or through the use of this field as a dictionary key
-        or a member of a set.
+        This will be set True when the hash() function is called on
+        this object, whether explicitly or through the use of this
+        field as a dictionary key or a member of a set.
         """
 
         self._name = None
@@ -158,8 +160,8 @@ class Field(object):
     def clone(self, clean_break=False):
         """Create a clone of this field.
 
-        Set clean_break to True in order to distance the copy from the instance
-        with which the original is associated.
+        Set clean_break to True in order to dissociate the copy from
+        the instance with which the original is associated.
         """
         ret = base_clone(self)
         ret.immutable = False
@@ -215,7 +217,7 @@ class Field(object):
         return hash_
     def __nonzero__(self):
         return bool(self.value)
-        
+
 
 class BooleanField(Field):
     """A field to represent a boolean value."""
@@ -248,7 +250,7 @@ class DateTimeField(Field):
                                      % (value, self._name))
         elif not isinstance(value, datetime.datetime) and value is not None:
             raise TypeError("'%s' object is not datetime, unicode, or str, as" \
-                                " required by field '%s'" % type(value))
+                                " required by field '%s'" % (type(value), self._name))
 
 
 class TimestampField(DateTimeField):
@@ -291,13 +293,8 @@ class StringField(Field):
             super(StringField, self)._set(None)
             return
         if self.encoding == 'binary':
-            if isinstance(value, unicode):
-                self.value_decoded = value
-                # no real good choice here...
-                self.value_encoded = value.encode('utf-8')
-            else:
-                self.value_encoded = value
-                self.value_decoded = None
+            self.value_encoded = value
+            self.value_decoded = None
             super(StringField, self)._set(value)
         else:
             if isinstance(value, unicode):
@@ -306,12 +303,17 @@ class StringField(Field):
             else:
                 self.value_encoded = value
                 self.value_decoded = value.decode(self.encoding)
+                value = self.value_decoded
             super(StringField, self)._set(value)
 
     def validate(self, value):
         super(StringField, self).validate(value)
         if value is None:
             return
+        if self.encoding == 'binary' and isinstance(value, unicode):
+            raise TypeError("Cannot convert unicode object into str with " \
+                                "'binary' encoding, as required by " \
+                                "field '%s'." % self._name)
         if not isinstance(value, (unicode, str)):
             raise TypeError("'%s' object is neither unicode nor bytes, as" \
                                 " required by field '%s'" \
@@ -334,17 +336,19 @@ class StringField(Field):
             else unicode(self.value)
 
     def decode(self, encoding=None, *args, **kwargs):
-        if encoding == self.encoding and self.value_decoded:
+        # ignore encoding...
+        if self.value_decoded:
             return self.value_decoded
         else:
             return self.value.decode(encoding, *args, **kwargs)
 
-    def encode(self, encoding=None, *args, **kwargs):
+    def encode(self, encoding='ascii', *args, **kwargs):
+        # 'ascii' is the default python encoding
         if encoding == self.encoding:
             return self.value_encoded
         else:
             return self.value_decoded.encode(encoding, *args, **kwargs) \
-                if self.value_decoded is not None \
+                    if self.value_decoded is not None \
                 else self.value.encode(encoding, *args, **kwargs)
 
     # provide string magic
@@ -630,6 +634,10 @@ class MultiField(Field):
 
         super(MultiField, self).__init__(*args, **kwargs)
 
+    def trip_set(self):
+        for element in self.value:
+            element.trip_set()
+        super(MultiField, self).trip_set()
     def reset_state(self):
         for element in self.value:
             element.reset_state()
@@ -1012,16 +1020,17 @@ class ForeignCollection(Foreign):
     def fetch_value(self):
         # The import dragons will keep you from doing something more
         # obvious.
-        from . import schema
+        import gobpersist.schema
+
         local_field = getattr(self.instance, self.local_field)
         if self.key is None:
-            return schema.SchemaCollection(
+            return gobpersist.schema.SchemaCollection(
                 cls=self.foreign_class,
                 session=self.instance.session,
                 sticky={'eq': [(self.foreign_field,), local_field]},
                 autoset={self.foreign_field : local_field})
         else:
-            return schema.SchemaCollection(
+            return gobpersist.schema.SchemaCollection(
                 cls=self.foreign_class,
                 session=self.instance.session,
                 key=self.key,
