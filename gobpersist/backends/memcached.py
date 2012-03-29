@@ -74,6 +74,10 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         value when fine-tuning these.
         """
 
+        self.locks_held = {}
+        """All locks currently held and their corresponding recursion
+        counts."""
+
         super(MemcachedBackend, self).__init__()
 
     def do_kv_multi_query(self, cls, keys):
@@ -140,6 +144,17 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         mechanism does not support holding locks for long periods of
         time.
         """
+        locks_recursive = set()
+        newlocks = set()
+        for lock in locks:
+            if lock not in self.locks_held:
+                newlocks.add(lock)
+            else:
+                locks_recursive.add(lock)
+        else:
+            return True
+        locks = newlocks
+
         locks_acquired = []
         try:
             with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
@@ -152,6 +167,10 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
                         # Back out all acquired locks
                         self.release_locks(locks_acquired)
                         return False
+            for lock in locks:
+                self.locks_held[lock] = 1
+            for lock in locks_recursive:
+                self.locks_held[lock] += 1
             return True
         except:
             self.release_locks(locks_acquired)
@@ -164,6 +183,7 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         module, as the locking mechanism was does not support holding
         locks for long periods of time.
         """
+        locks = frozenset(locks)
         tries = self.lock_tries
         # After this many tries, we forcibly acquire the locks
 
@@ -177,17 +197,48 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
 
         # We failed to acquire locks after *tries* attempts.  Say a
         # hail mary and force acquire.
+        set_multi = {}
+        locks_recursive = set()
+        for lock in locks:
+            if lock not in self.locks_held:
+                set_multi[lock] = 'locked'
+            else:
+                locks_recursive.add(lock)
+        else:
+            return True
         with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
-            for lock in locks:
-                # Hail Mary!
-                # Lock the object
-                mc.set(lock, 'locked')
-            return locks
+            # Hail Mary!
+            # Lock the objects
+            mc.set_multi(set_multi)
+        for lock in set_multi.iterkeys():
+            self.locks_held[lock] = 1
+        for lock in locks_recursive:
+            self.locks_held[lock] += 1
+        return locks
 
     def release_locks(self, locks):
         """Releases a set of locks."""
+        locks_recursive = set()
+        newlocks = set()
+        for lock in locks:
+            if lock not in self.locks_held:
+                # Unlocking a lock we never held?  Hrm...
+                newlocks.add(lock)
+            else:
+                if self.locks_held[lock] == 1:
+                    newlocks.add(lock)
+                else:
+                    locks_recursive.add(lock)
+        else:
+            return []
+        locks = newlocks
         with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
             mc.delete_multi(locks)
+        for lock in newlocks:
+            if lock in self.locks_held:
+                del self.locks_held[lock]
+        for lock in locks_recursive:
+            self.locks_held[lock] -= 1
 
     def key_to_mykey(self, key, use_persisted_version=False):
         mykey = super(MemcachedBackend, self).key_to_mykey(key,
