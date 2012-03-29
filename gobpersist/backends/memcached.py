@@ -2,6 +2,7 @@ import time
 import cPickle as pickle
 import datetime
 import itertools
+import functools
 
 import pylibmc
 
@@ -136,8 +137,8 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         
         Returns true if successful, false otherwise.  Be very careful
         calling this function from outside this module, as the locking
-        mechanism was does not support holding locks for long periods
-        of time.
+        mechanism does not support holding locks for long periods of
+        time.
         """
         locks_acquired = []
         try:
@@ -481,6 +482,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
 
         to_set = {}
         integrity_add = []
+        integrity_cascade = []
         locks = set()
         if base_key is not None:
             if len(items) == 1 and items[0].obj_key == base_key:
@@ -570,24 +572,86 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
     def cache_items(self, items):
         self.do_cache_query(items=items)
 
+    def brute_search(self, mc, keyset):
+        res = mc.get_multi(keyset)
+        ret = []
+        for store in res.itervalues():
+            store = self.serializer.loads(store)
+            if isinstance(store, (list, tuple)):
+                # Collection or reference?
+                if len(store) == 0:
+                    # Empty collection
+                    pass
+                elif isinstance(store[0], (list, tuple)):
+                    # Collection
+                    ret.extend(self.brute_search(mc, set([self.separator.join(map(str, item)) for item in store])))
+                else:
+                    # Reference
+                    ret.extend(self.brute_search(mc, set([self.separator.join(map(str, store))])))
+            else:
+                # Object
+                ret.append(store)
+        return ret
+
+    def build_invalidation_keyset(self, items, allitems, keyset, integrity_keyset, cascade_keyset):
+        recurse_keydict = {}
+        for gob in items:
+            keyset.add(self.separator.join(self.key_to_mykey(gob.obj_key)))
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    gob.unique_keyset()):
+                keyset.add(self.separator.join(key))
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    gob.keyset()):
+                keyset.add(self.separator.join(key))
+                integrity_keyset.add(self.separator.join((self.integrity_prefix,) + key))
+            for consistence in gob.consistency:
+                if consistence['invalidate'] == 'cascade':
+                    cascade_key = self.separator.join(self.key_to_mykey(consistence['foreign_obj']))
+                    if cascade_key not in cascade_keyset:
+                        cascade_keyset.add(cascade_key)
+                        if consistence['foreign_class'] in recurse_keydict:
+                            keyset = recurse_keydict[consistence['foreign_class']]
+                        else:
+                            keyset = recurse_keydict[consistence['foreign_class']] = set()
+                        keyset.add(cascade_key)
+                        keyset.add(self.integrity_prefix + self.separator + cascade_key)
+        print recurse_keydict
+        items.clear()
+        locks = set([self.lock_prefix + self.separator + key \
+                         for v in recurse_keydict.itervalues() \
+                         for key in v])
+        self.acquire_locks(locks)
+        try:
+            with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+                for cls in recurse_keydict:
+                    recurse_keydict[cls] = self.brute_search(mc, recurse_keydict[cls])
+                print recurse_keydict
+        finally:
+            self.release_locks(locks)
+        for cls in recurse_keydict:
+            for gob in itertools.imap(
+                    functools.partial(self.mygob_to_gob, cls),
+                    recurse_keydict[cls]):
+                if gob not in allitems:
+                    allitems.add(gob)
+                    items.add(gob)
+        print items
+        if len(items) != 0:
+            self.build_invalidation_keyset(items, allitems, keyset, integrity_keyset, cascade_keyset)
+
     def invalidate(self, items=None, keys=None):
         # remove all keys.
         # remove all keys referenced by integrity keys.
         # remove all integrity keys.
+        # cascade according to consistency requirements.
         keyset = set()
         integrity_keyset = set()
+        cascade_keyset = set()
         if items is not None:
-            for gob in items:
-                keyset.add(self.separator.join(self.key_to_mykey(gob.obj_key)))
-                for key in itertools.imap(
-                        self.key_to_mykey,
-                        gob.unique_keyset()):
-                    keyset.add(self.separator.join(key))
-                for key in itertools.imap(
-                        self.key_to_mykey,
-                        gob.keyset()):
-                    keyset.add(self.separator.join(key))
-                    integrity_keyset.add(self.separator.join((self.integrity_prefix,) + key))
+            items = set(items)
+            self.build_invalidation_keyset(items, items.copy(), keyset, integrity_keyset, cascade_keyset)
         if keys is not None:
             for key in itertools.imap(
                     self.key_to_mykey,

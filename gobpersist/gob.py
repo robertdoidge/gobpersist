@@ -59,6 +59,71 @@ class Gob(object):
     implementation.
     """
 
+    consistency = []
+    """Consistency requirements (triggers) for a given object.
+
+    This should be a list of dictionaries, with the following values:
+
+    * 'field' - the local field with consistency requirements.
+
+    * 'foreign_class' - the class of the foreign object(s).
+
+    * 'foreign_obj' - a key to obtain the foreign object(s) which must
+      be kept consistent with this object.
+
+    * 'foreign_field' - the field on the foreign object(s) which must
+      be kept consistent.
+
+    * 'update' (triggered when the field is updated) - one of
+      'cascade' (update the foreign field(s)), 'set_null' (set the
+      foreign field to None), 'set_default' (set the foreign field to
+      a default value), or None (take no action).
+
+    * 'remove' (triggered when the object is removed from the db) -
+      one of 'cascade' (delete the foreign object(s)), 'set_null' (set the
+      foreign field to None), 'set_default' (set the foreign field to
+      a default value), or None (take no action).
+
+    * 'invalidate' (triggered when the object in the cache is
+      invalidated) - either 'cascade' (invalidate the foreign
+      object(s)), or None (take no action).
+    """
+
+    set_consistency = []
+    """Consistency requirements (triggers) for a given object,
+    pertaining to sets of keys rather than individual keys.
+
+    This should be a list of dictionaries, with the following values:
+
+    * 'field' - the local field with consistency requirements.
+
+    * 'foreign_class' - the class of the foreign object(s).
+
+    * 'foreign_obj' - a key to obtain the foreign object(s) which must
+      be kept consistent with this object.
+
+    * 'foreign_field' - the set field on the foreign object(s) which
+      must be kept consistent.
+
+    * 'foreign_value' - the value in the foreign set which corresponds
+      to this object.
+
+    * 'update' (triggered when the field is updated) - one of
+      'cascade' (update the foreign set(s)), 'remove' (remove the
+      foreign objects that correspond to the removed keys from the
+      db), or None (take no action).
+
+    * 'remove' (triggered when the object is removed from the db) -
+      one of 'cascade' (delete the foreign object(s)), 'update'
+      (remove this object reference from the foreign set(s)), or
+      None (take no action).
+
+    * 'invalidate' (triggered when the object in the cache is
+      invalidated) - either 'cascade' (invalidate the foreign
+      object(s)), or None (take no action).
+    """
+
+
     def keyset(self):
         """This function is called to determine which keys under which
         to store this object.
@@ -97,6 +162,10 @@ class Gob(object):
                         value.foreign_class = cls
 
         cls.primary_key = primary_key
+
+        for consistence in cls.consistency:
+            if consistence['foreign_class'] == 'self':
+                consistence['foreign_class'] = cls
 
         if 'class_key' not in cls.__dict__:
             cls.class_key = cls.__name__.lower() + 's'
@@ -163,6 +232,72 @@ class Gob(object):
                                  and keyelem.instance is None \
                              else keyelem \
                          for keyelem in self.obj_key])
+
+        # make consistency rules refer to local fields
+        self.consistency \
+            = [{'field': self.__dict__[consistence['field'].instance_key] \
+                        if 'field' in consistence \
+                        and isinstance(consistence['field'], gobpersist.field.Field) \
+                        and consistence['field'].instance is None \
+                    else consistence['field'] \
+                        if 'field' in consistence \
+                    else None,
+                'foreign_class': consistence['foreign_class'],
+                'foreign_obj': \
+                    tuple([self.__dict__[keyelem.instance_key] \
+                                       if isinstance(keyelem, gobpersist.field.Field) \
+                                       and keyelem.instance is None \
+                                   else keyelem \
+                               for keyelem in consistence['foreign_obj']]),
+                'foreign_field': consistence['foreign_field'] \
+                        if 'foreign_field' in consistence \
+                    else None,
+                'update': consistence['update'] \
+                        if 'update' in consistence \
+                    else None,
+                'remove': consistence['remove'] \
+                        if 'remove' in consistence \
+                    else None,
+                'invalidate': consistence['invalidate'] \
+                        if 'invalidate' in consistence \
+                    else None}
+               for consistence in self.consistency]
+
+        self.set_consistency \
+            = [{'field': self.__dict__[consistence['field'].instance_key] \
+                        if 'field' in consistence \
+                        and isinstance(consistence['field'], gobpersist.field.Field) \
+                        and consistence['field'].instance is None \
+                    else consistence['field'] \
+                        if 'field' in consistence \
+                    else None,
+                'foreign_class': consistence['foreign_class'],
+                'foreign_obj': \
+                    tuple([self.__dict__[keyelem.instance_key] \
+                                       if isinstance(keyelem, gobpersist.field.Field) \
+                                       and keyelem.instance is None \
+                                   else keyelem \
+                               for keyelem in consistence['foreign_obj']]),
+                'foreign_field': consistence['foreign_field'] \
+                        if 'foreign_field' in consistence \
+                    else None,
+                'foreign_value': self.__dict__[consistence['foreign_value'].instance_key] \
+                        if 'foreign_value' in consistence \
+                        and isinstance(consistence['foreign_value'], gobpersist.field.Field) \
+                        and consistence['foreign_value'].instance is None \
+                    else consistence['foreign_value'] \
+                        if 'foreign_value' in consistence \
+                    else None,
+                'update': consistence['update'] \
+                        if 'update' in consistence \
+                    else None,
+                'remove': consistence['remove'] \
+                        if 'remove' in consistence \
+                    else None,
+                'invalidate': consistence['invalidate'] \
+                        if 'invalidate' in consistence \
+                    else None}
+               for consistence in self.set_consistency]
 
         # autoset fields according to constructor arguments
         for key, value in kwdict.iteritems():
@@ -300,4 +435,45 @@ class Gob(object):
                                                                 if isinstance(keyelem, gobpersist.field.Field) \
                                                             else repr(keyelem) \
                                                             for keyelem in key]) \
-                                        for key in self.unique_keys])])))
+                                        for key in self.unique_keys]),
+                       "consistency=[%s]" \
+                       % ', '.join([ \
+                           "{'field': %s, 'foreign_obj': %s, 'foreign_field': %s," \
+                           " 'update': %s, 'remove': %s, 'invalidate': %s}" \
+                           % ("%s=%s" % (consistence['field']._name, \
+                                             repr(consistence['field'].value)) \
+                                      if isinstance(consistence['field'], gobpersist.field.Field) \
+                                  else repr(consistence['field']),
+                              "(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
+                                                            else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
+                                                                if isinstance(keyelem, gobpersist.field.Field) \
+                                                            else repr(keyelem) \
+                                                            for keyelem in consistence['foreign_obj']]),
+                              repr(consistence['foreign_field']),
+                              repr(consistence['update']),
+                              repr(consistence['remove']),
+                              repr(consistence['invalidate'])) \
+                           for consistence in self.consistency]),
+                       "consistency=[%s]" \
+                       % ', '.join([ \
+                           "{'field': %s, 'foreign_obj': %s, 'foreign_field': %s," \
+                           " 'foreign_value': %s, 'update': %s, 'remove': %s," \
+                           " 'invalidate': %s}" \
+                           % ("%s=%s" % (consistence['field']._name, \
+                                             repr(consistence['field'].value)) \
+                                      if isinstance(consistence['field'], gobpersist.field.Field)
+                                  else repr(consistence['field']),
+                              "(%s)" % ', '.join([keyelem.coll_name if isinstance(keyelem, Gob) \
+                                                            else "%s=%s" % (keyelem._name, repr(keyelem.value)) \
+                                                                if isinstance(keyelem, gobpersist.field.Field) \
+                                                            else repr(keyelem) \
+                                                            for keyelem in consistence['foreign_obj']]),
+                              repr(consistence['foreign_field']),
+                              "%s=%s" % (consistence['foreign_value']._name, \
+                                             repr(consistence['foreign_value'].value)) \
+                                      if isinstance(consistence['foreign_value'], gobpersist.field.Field) \
+                                  else repr(consistence['foreign_value']),
+                              repr(consistence['update']),
+                              repr(consistence['remove']),
+                              repr(consistence['invalidate'])) \
+                           for consistence in self.set_consistency])])))
