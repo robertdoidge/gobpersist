@@ -455,6 +455,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                  serializer=PickleWrapper, lock_prefix='_lock',
                  pool=default_pool, separator='.', lock_tries=8,
                  lock_backoff=0.25, integrity_prefix='_INTEGRITY_',
+                 shadow_prefix='_SHADOW_',
                  *args, **kwargs):
 
         self.integrity_prefix = integrity_prefix
@@ -463,6 +464,15 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
 
         Integrity keys keep lists of cached keys where when the value
         of the key is changed, the cached keys should be invalidated.
+        """
+
+        self.shadow_prefix = shadow_prefix
+        """A prefix to add to a key to create the shadow key for
+        that key.
+
+        Shadow keys are the keys representing everything currently in
+        the cache, rather than in whatever data source the cache
+        represents.
         """
 
         MemcachedBackend.__init__(self, servers, expiry, binary, serializer,
@@ -530,10 +540,12 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
         # 1. Each entry is added as the result of base_key
         # 2. All unique keys for this object are added
         # 3. Base_key is added to (integrity_prefix, key) for each key
+        # 4. Each entry's keys and unique keys are added as shadow keys
 
         to_set = {}
         integrity_add = []
         integrity_cascade = []
+        shadow_add = []
         locks = set()
         if base_key is not None:
             if len(items) == 1 and items[0].obj_key == base_key:
@@ -556,6 +568,13 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                     gob.unique_keyset()):
                 locks.add(self.lock_prefix + self.separator + self.separator.join(key))
                 to_set[self.separator.join(key)] = self.serializer.dumps(gob_key)
+                locks.add(self.lock_prefix + self.separator + self.shadow_prefix + self.separator + self.separator.join(key))
+                to_set[self.shadow_prefix + self.separator + self.separator.join(key)] = self.serializer.dumps(gob_key)
+            for key in itertools.imap(
+                    self.key_to_mykey,
+                    gob.keyset()):
+                locks.add(self.lock_prefix + self.separator + self.shadow_prefix + self.separator + self.separator.join(key))
+                shadow_add.append(((self.shadow_prefix,) + key, gob_key))
             if base_key is not None:
                 # Don't try to set integrity if there isn't a base_key
                 for key in itertools.imap(
@@ -572,6 +591,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
         self.acquire_locks(locks)
         try:
             with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+                # integrity adds
                 if integrity_add:
                     c_adds = mc.get_multi([self.separator.join(c_add[0]) \
                                                for c_add \
@@ -590,13 +610,39 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                     integrity_set = {}
                     for k,v in c_adds.iteritems():
                         integrity_set[k] = self.serializer.dumps(list(v))
-                    mc.set_multi(to_set, self.expiry)
+
+                # shadow adds
+                c_adds = mc.get_multi([self.separator.join(c_add[0]) \
+                                           for c_add \
+                                           in shadow_add])
+                for key in c_adds:
+                    c_adds[key] \
+                        = set([tuple(path)
+                               for path in self.serializer.loads(c_adds[key])])
+                for c_add in shadow_add:
+                    key = self.separator.join(c_add[0])
+                    if key in c_adds:
+                        res = c_adds[key]
+                    else:
+                        res = c_adds[key] = set()
+                    res.add(c_add[1])
+                shadow_set = {}
+                for k,v in c_adds.iteritems():
+                    shadow_set[k] = self.serializer.dumps(list(v))
+
+                # Cache and unique keys
+                mc.set_multi(to_set, self.expiry)
+
+                # finish up integrity and shadow
+                if self.expiry > 0:
+                    mc.set_multi(shadow_set, self.expiry + 10)
+                else:
+                    mc.set_multi(shadow_set, self.expiry)
+                if integrity_add:
                     if self.expiry > 0:
                         mc.set_multi(integrity_set, self.expiry + 10)
                     else:
                         mc.set_multi(integrity_set, self.expiry)
-                else:
-                    mc.set_multi(to_set, self.expiry)
         finally:
             self.release_locks(locks)
 
@@ -667,8 +713,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                         else:
                             keyset = recurse_keydict[consistence['foreign_class']] = set()
                         keyset.add(cascade_key)
-                        keyset.add(self.integrity_prefix + self.separator + cascade_key)
-        print recurse_keydict
+                        keyset.add(self.shadow_prefix + self.separator + cascade_key)
         items.clear()
         locks = set([self.lock_prefix + self.separator + key \
                          for v in recurse_keydict.itervalues() \
@@ -678,7 +723,6 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
             with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
                 for cls in recurse_keydict:
                     recurse_keydict[cls] = self.brute_search(mc, recurse_keydict[cls])
-                print recurse_keydict
         finally:
             self.release_locks(locks)
         for cls in recurse_keydict:
@@ -688,7 +732,6 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                 if gob not in allitems:
                     allitems.add(gob)
                     items.add(gob)
-        print items
         if len(items) != 0:
             self.build_invalidation_keyset(items, allitems, keyset, integrity_keyset, cascade_keyset)
 
