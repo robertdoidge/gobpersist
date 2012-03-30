@@ -690,8 +690,13 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                 ret.append(store)
         return ret
 
-    def build_invalidation_keyset(self, items, allitems, keyset, integrity_keyset, cascade_keyset):
-        recurse_keydict = {}
+    def build_invalidation_keyset(self, items, keys, locks, keyset, integrity_keyset, cascade_keyset, force_lock):
+        # remove all keys.
+        # remove all keys referenced by integrity keys.
+        # remove all integrity keys.
+        # cascade according to consistency requirements.
+        cascade_keydict = {}
+        new_integrity_keyset = set()
         for gob in items:
             keyset.add(self.separator.join(self.key_to_mykey(gob.obj_key)))
             for key in itertools.imap(
@@ -701,110 +706,100 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
             for key in itertools.imap(
                     self.key_to_mykey,
                     gob.keyset()):
-                keyset.add(self.separator.join(key))
-                integrity_keyset.add(self.separator.join((self.integrity_prefix,) + key))
+                key = self.separator.join(key)
+                keyset.add(key)
+                integrity_key = self.integrity_prefix + self.separator + key
+                if integrity_key not in integrity_keyset:
+                    integrity_keyset.add(integrity_key)
+                    new_integrity_keyset.add(integrity_key)
             for consistence in gob.consistency:
                 if consistence['invalidate'] == 'cascade':
                     cascade_key = self.separator.join(self.key_to_mykey(consistence['foreign_obj']))
                     if cascade_key not in cascade_keyset:
                         cascade_keyset.add(cascade_key)
-                        if consistence['foreign_class'] in recurse_keydict:
-                            keyset = recurse_keydict[consistence['foreign_class']]
+                        if consistence['foreign_class'] in cascade_keydict:
+                            ks = cascade_keydict[consistence['foreign_class']]
                         else:
-                            keyset = recurse_keydict[consistence['foreign_class']] = set()
-                        keyset.add(cascade_key)
-                        keyset.add(self.shadow_prefix + self.separator + cascade_key)
+                            ks = cascade_keydict[consistence['foreign_class']] = set()
+                        ks.add(self.shadow_prefix + self.separator + cascade_key)
+        for key in itertools.imap(
+                self.key_to_mykey,
+                keys):
+            key = self.separator.join(key)
+            keyset.add(key)
+            integrity_key = self.integrity_prefix + self.separator + key
+            if integrity_key not in integrity_keyset:
+                integrity_keyset.add(integrity_key)
+                new_integrity_keyset.add(integrity_key)
         items.clear()
-        locks = set([self.lock_prefix + self.separator + key \
-                         for v in recurse_keydict.itervalues() \
-                         for key in v])
-        self.acquire_locks(locks)
-        try:
-            with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
-                for cls in recurse_keydict:
-                    recurse_keydict[cls] = self.brute_search(mc, recurse_keydict[cls])
-        finally:
-            self.release_locks(locks)
-        for cls in recurse_keydict:
-            for gob in itertools.imap(
-                    functools.partial(self.mygob_to_gob, cls),
-                    recurse_keydict[cls]):
-                if gob not in allitems:
-                    allitems.add(gob)
-                    items.add(gob)
-        if len(items) != 0:
-            self.build_invalidation_keyset(items, allitems, keyset, integrity_keyset, cascade_keyset)
+        keys.clear()
+        newlocks = set([self.lock_prefix + self.separator + key \
+                            for v in cascade_keydict.itervalues() \
+                            for key in v] \
+                       + [self.lock_prefix + self.separator + key \
+                              for key in new_integrity_keyset])
+        newlocks -= locks
+        if force_lock:
+            self.acquire_locks(newlocks)
+        else:
+            if not self.try_acquire_locks(newlocks):
+                raise exception.Deadlock("Could not acquire the locks " + repr(newlocks))
+        locks |= newlocks
+        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+            for cls in cascade_keydict:
+                cascade_keydict[cls] = self.brute_search(mc, cascade_keydict[cls])
+            integrity_dict = mc.get_multi(new_integrity_keyset)
+        for res in integrity_dict.itervalues():
+            key_list = self.serializer.loads(res)
+            for key in key_list:
+                keys.add(tuple(key))
+        for cls, goblist in cascade_keydict.iteritems():
+            for gob in goblist:
+                items.add(self.mygob_to_gob(cls, gob))
+        if len(items) != 0 or len(keys) != 0:
+            self.build_invalidation_keyset(items, keys, locks, keyset, integrity_keyset, cascade_keyset, force_lock)
 
     def invalidate(self, items=None, keys=None):
-        # remove all keys.
-        # remove all keys referenced by integrity keys.
-        # remove all integrity keys.
-        # cascade according to consistency requirements.
         keyset = set()
         integrity_keyset = set()
         cascade_keyset = set()
-        if items is not None:
+        if items is None:
+            items = set()
+        else:
             items = set(items)
-            self.build_invalidation_keyset(items, items.copy(), keyset, integrity_keyset, cascade_keyset)
-        if keys is not None:
-            for key in itertools.imap(
-                    self.key_to_mykey,
-                    keys):
-                keyset.add(self.separator.join(key))
-                integrity_keyset.add(self.separator.join((self.integrity_prefix,) + key))
-
+        if keys is None:
+            keys = set()
+        else:
+            keys = set(keys)
+        locks = set()
         tries = self.lock_tries
-
-        first_locks = set([self.lock_prefix + self.separator + key \
-                               for key in itertools.chain(keyset,
-                                                          integrity_keyset)])
-
-        with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
-            while tries > 0:
-                self.acquire_locks(first_locks)
-                try:
-                    integrity_dict = mc.get_multi(integrity_keyset)
-                    keyset_extra = set()
-                    for v in integrity_dict.itervalues():
-                        key_list = self.serializer.loads(v)
-                        for key in key_list:
-                            keyset_extra.add(str(self.separator.join(key)))
-                    second_locks = set([self.lock_prefix + self.separator + key \
-                                            for key in keyset_extra]) \
-                                   - first_locks
-                    if not self.try_acquire_locks(second_locks):
-                        self.release_locks(first_locks)
-                        tries -= 1
-                        time.sleep(self.lock_backoff)
-                        continue
-                    else:
-                        # successfully acquired all locks
-                        break
-                except:
-                    self.release_locks(first_locks)
-                    raise
-            else:
-                # we ran out of tries; say a hail mary and force the
-                # acquisition
-                self.acquire_locks(first_locks)
-                try:
-                    integrity_dict = mc.get_multi(integrity_keyset)
-                    keyset_extra = set()
-                    for v in integrity_dict.itervalues():
-                        key_list = self.serializer.loads(v)
-                        for key in key_list:
-                            keyset_extra.add(str(self.separator.join(key)))
-                    second_locks = set([self.lock_prefix + self.separator + key \
-                                            for key in keyset_extra]) \
-                                   - first_locks
-                    self.acquire_locks(second_locks)
-                except:
-                    self.release_locks(first_locks)
-                    raise
+        while(True):
             try:
-                mc.delete_multi(list(keyset | keyset_extra | integrity_keyset))
+                self.build_invalidation_keyset(items.copy(), keys.copy(), locks, keyset, integrity_keyset, cascade_keyset, tries == 0)
+                keyset |= integrity_keyset | cascade_keyset
+                newlocks = set([self.lock_prefix + self.separator + key for key in keyset])
+                newlocks -= locks
+                if(tries > 0):
+                    if not self.try_acquire_locks(newlocks):
+                        raise exception.Deadlock("Could not acquire the locks " + repr(newlocks))
+                else:
+                    self.acquire_locks(newlocks)
+                locks |= newlocks
+                with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
+                    mc.delete_multi(list(keyset))
+            except gobpersist.exception.Deadlock:
+                if tries == 0: # How would this happen??
+                    raise
+                tries -= 1
+                keyset.clear()
+                integrity_keyset.clear()
+                cascade_keyset.clear()
+                time.sleep(self.lock_backoff)
+                continue
             finally:
-                self.release_locks(first_locks | second_locks)
+                self.release_locks(locks)
+                locks.clear()
+            break
 
     def _key_range_to_key(self, key_range):
         return key_range[0] + ('-',) + key_range[1]

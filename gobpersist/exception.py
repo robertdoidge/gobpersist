@@ -28,3 +28,7 @@ class Corruption(Exception):
     conflicts with the semantics of the backend or schema which
     interfaces with it."""
     pass
+
+class Deadlock(Exception):
+    """Raised to indicate that a required lock cannot be obtained."""
+    pass
