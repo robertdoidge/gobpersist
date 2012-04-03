@@ -692,7 +692,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
             self.acquire_locks(newlocks)
         else:
             if not self.try_acquire_locks(newlocks):
-                raise exception.Deadlock("Could not acquire the locks " + repr(newlocks))
+                raise gobpersist.exception.Deadlock("Could not acquire the locks " + repr(newlocks))
         locks |= newlocks
         with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
             for cls in cascade_keydict:
@@ -730,7 +730,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                 newlocks -= locks
                 if(tries > 0):
                     if not self.try_acquire_locks(newlocks):
-                        raise exception.Deadlock("Could not acquire the locks " + repr(newlocks))
+                        raise gobpersist.exception.Deadlock("Could not acquire the locks " + repr(newlocks))
                 else:
                     self.acquire_locks(newlocks)
                 locks |= newlocks
@@ -759,7 +759,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
             if len(term) > 1:
                 raise gobpersist.exception.QueryError("Too many keys in quantifier")
             k, v = term.items()[0]
-            v = _serialize_term(v)
+            v = self._serialize_term(v)
             return ('_' + k + '_',) + v
         elif isinstance(term, tuple):
             # Identifier
@@ -817,7 +817,7 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
     def _retrieve_to_key(self, key, retrieve):
         return key + ('_RETRIEVE_',) + tuple(retrieve)
 
-    def _offlim_to_key(key, offset, limit):
+    def _offlim_to_key(self, key, offset, limit):
         return key + ('_OFFSET_',) \
             + ('_NULL_',) if offset is None else (offset,) \
             + ('_LIMIT_',) \
