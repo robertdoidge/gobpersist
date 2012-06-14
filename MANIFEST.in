@@ -1,0 +1,4 @@
+recursive-include gobpersist *
+exclude gobpersist/TODO
+exclude gobpersist/sample.txt
+exclude gobpersist/test.py
