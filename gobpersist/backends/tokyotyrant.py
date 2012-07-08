@@ -1,3 +1,24 @@
+# tokyotyrant.py - Back end interface to Tokyo Tyrant
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Back end interface to Tokyo Tyrant.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com
+"""
+
 import time
 import cPickle as pickle
 import datetime
@@ -31,10 +52,19 @@ class PickleWrapper(object):
 
 class TyrantClient(pytyrant.Tyrant):
     """Wrapper class to create a "Client" class suitable for use with
-    the SimpleThreadMappedPool.
+    the :class:`gobpersist.backends.pools.SimpleThreadMappedPool`.
     """
     def __init__(self, host='127.0.0.1', port=pytyrant.DEFAULT_PORT,
                  unix=None):
+        """
+        Args:
+           ``host``: The hostname to connect to.
+
+           ``port``: The port to connect to.
+
+           ``unix``: Alternately, the path of a unix socket to connect
+           to.
+        """
         if unix is not None:
             sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             sock.connect(unix)
@@ -53,12 +83,52 @@ class TokyoTyrantBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
                  unix=None, serializer=PickleWrapper, lock_prefix='_lock',
                  pool=default_pool, separator='.', lock_tries=8,
                  lock_backoff=0.25):
+        """
+        Args:
+           ``host``: The hostname to connect to.
+
+           ``port``: The port to connect to.
+
+           ``unix``: Alternately, the path of a unix socket to connect
+           to.
+
+           ``serializer``: An object which provides serialization of
+           gobpersist data.
+
+              Must provide ``loads`` and ``dumps``.
+
+           ``lock_prefix``: A string to prepend to a key value to
+           represent the lock for that key.
+
+           ``pool``: They pool of tokyo tyrant connections.
+
+           ``separator``: The separator between key elements.
+
+              The default is '.'.
+
+           ``lock_tries``: The number of times to try locking before
+           forcibly acquiring all locks.
+
+              Since there's no way to monitor other processes to make
+              sure they've properly cleaned up, this prevents a
+              permanent object lock by a crashed or hung process.  The
+              default is 8.
+
+           ``lock_backoff``: The amount of time, in seconds, for the
+           locking mechanism to wait between tries.
+
+              The default is 0.25.  The maximum wait time for any lock
+              acquisition is ``lock_tries * lock_backoff``, so
+              consider this value when fine-tuning these.
+        """
         self.tt_args = ()
         self.tt_kwargs = {'host': host, 'port': port, 'unix': unix}
         self.pool = pool
 
         self.serializer = serializer
-        """The serializer for this back end."""
+        """An object which provides serialization of gobpersist data.
+
+        Must provide ``loads`` and ``dumps``."""
 
         self.lock_prefix = lock_prefix
         """A string to prepend to a key value to represent the lock
@@ -84,7 +154,7 @@ class TokyoTyrantBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         to wait between tries.
 
         The default is 0.25.  The maximum wait time for any lock
-        acquisition is lock_tries * lock_backoff, so consider this
+        acquisition is ``lock_tries * lock_backoff``, so consider this
         value when fine-tuning these.
         """
 

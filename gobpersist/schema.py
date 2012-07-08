@@ -1,3 +1,25 @@
+# schema.py - A representation of an entire database schema
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Convenience wrappers for defining and interacting with a whole
+database schema.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import gobpersist.gob
 import gobpersist.field
 
@@ -7,21 +29,37 @@ class SchemaCollection(object):
     This is basically just syntactic sugar for making queries.  But
     maybe not completely.
 
-    The 'list' method takes a simpler query language than the session.
-    You query using a series of key-value pairs, where the keys are
-    the names of the variables for the object and the values are the
-    values which must be equal to those objects, for example:
+    The :func:`list` method takes a simpler query language than
+    :func:`gobpersist.session.Session.query`.  You query using a
+    series of key-value pairs, where the keys are the names of the
+    variables for the object and the values are the values which must
+    be equal to those objects, for example::
 
-    sc.list(name='abc123')
+       sc.list(name='abc123')
 
-    You can use other comparators than 'eq' by using tuples, for
-    example:
+    You can use other comparators than ``'eq'`` by using tuples, for
+    example::
 
-    sc.list(name='abc123', num_users=('gt', 20))
+       sc.list(name='abc123', num_users=('gt', 20))
 
-    The full query language is available by the _query parameter.
+    The full query language is available by the ``_query`` parameter.
     """
     def __init__(self, cls, session, key, sticky=None, autoset=None):
+        """
+        Args:
+           ``cls``: The class of which objects of this
+           SchemaCollection are instances.
+
+           ``session``: The session for this SchemaCollection.
+
+           ``key``: The key for this SchemaCollection.
+
+           ``sticky``: A query fragment which is always added to the
+           query.
+
+           ``autoset``: A dictionary of key-value pairs that will be
+           set on each added item.
+        """
         self.cls = cls
         """The class of which objects of this SchemaCollection are
         instances."""
@@ -115,7 +153,7 @@ class SchemaCollection(object):
     def update(self, gob):
         """Update item.
 
-        This is equivalent to calling gob.save()
+        This is equivalent to calling ``gob.save()``
         """
         gob.session = self.session
         gob.save()
@@ -124,7 +162,7 @@ class SchemaCollection(object):
     def remove(self, gob):
         """Remove item.
 
-        This is equivalent to calling gob.remove()
+        This is equivalent to calling ``gob.remove()``
         """
         gob.session = self.session
         gob.remove()
@@ -149,6 +187,10 @@ class Schema(object):
     the Gob classes you want in your schema.
     """
     def __init__(self, session):
+        """
+        Args:
+           ``session``: The session for this Schema.
+        """
 
         self.session = session
         """The session for this Schema"""
@@ -174,7 +216,8 @@ class Schema(object):
 
         Note that schema initialization is still rather dumb.  This
         will just overwrite anything that's in the database, so only
-        use it for true initialization."""
+        use it for true initialization.
+        """
         for name in dir(self):
             collection = getattr(self, name)
             if isinstance(collection, SchemaCollection):

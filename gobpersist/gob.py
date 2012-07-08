@@ -1,3 +1,24 @@
+# gob.py - an individual "relation"/"tuple"/"object"/etc.
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Gobs -- objects that will persist in the database.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import gobpersist.field
 
 def field_key(key):
@@ -29,15 +50,15 @@ class Gob(object):
     obj_key = None
     """Primary key for objects of this class.
 
-    The default is (class_key, primary_key).
+    The default is ``(class_key, primary_key)``.
     """
 
     coll_key = None
     """Key for objects of this collection.
 
-    The default is (class_key,).  Note that by default no objects will
-    be stored here; you must add it to the return value of keyset when
-    that is appropriate.
+    The default is ``(class_key,)``.  Note that by default no objects
+    will be stored here; you must add it to the return value of keyset
+    when that is appropriate.
     """
 
     keys = []
@@ -64,29 +85,30 @@ class Gob(object):
 
     This should be a list of dictionaries, with the following values:
 
-    * 'field' - the local field with consistency requirements.
+    * ``'field'`` - the local field with consistency requirements.
 
-    * 'foreign_class' - the class of the foreign object(s).
+    * ``'foreign_class'`` - the class of the foreign object(s).
 
-    * 'foreign_obj' - a key to obtain the foreign object(s) which must
-      be kept consistent with this object.
+    * ``'foreign_obj'`` - a key to obtain the foreign object(s) which
+      must be kept consistent with this object.
 
-    * 'foreign_field' - the field on the foreign object(s) which must
-      be kept consistent.
+    * ``'foreign_field'`` - the field on the foreign object(s) which
+      must be kept consistent.
 
-    * 'update' (triggered when the field is updated) - one of
-      'cascade' (update the foreign field(s)), 'set_null' (set the
-      foreign field to None), 'set_default' (set the foreign field to
-      a default value), or None (take no action).
+    * ``'update'`` (triggered when the field is updated) - one of
+      ``'cascade'`` (update the foreign field(s)), ``'set_null'`` (set
+      the foreign field to ``None``), ``'set_default'`` (set the
+      foreign field to a default value), or ``None`` (take no action).
 
-    * 'remove' (triggered when the object is removed from the db) -
-      one of 'cascade' (delete the foreign object(s)), 'set_null' (set the
-      foreign field to None), 'set_default' (set the foreign field to
-      a default value), or None (take no action).
+    * ``'remove'`` (triggered when the object is removed from the db)
+      - one of ``'cascade'`` (delete the foreign object(s)),
+      ``'set_null'`` (set the foreign field to ``None``),
+      ``'set_default'`` (set the foreign field to a default value), or
+      ``None`` (take no action).
 
-    * 'invalidate' (triggered when the object in the cache is
-      invalidated) - either 'cascade' (invalidate the foreign
-      object(s)), or None (take no action).
+    * ``'invalidate'`` (triggered when the object in the cache is
+      invalidated) - either ``'cascade'`` (invalidate the foreign
+      object(s)), or ``None`` (take no action).
     """
 
     set_consistency = []
@@ -95,55 +117,56 @@ class Gob(object):
 
     This should be a list of dictionaries, with the following values:
 
-    * 'field' - the local field with consistency requirements.
+    * ``'field'`` - the local field with consistency requirements.
 
-    * 'foreign_class' - the class of the foreign object(s).
+    * ``'foreign_class'`` - the class of the foreign object(s).
 
-    * 'foreign_obj' - a key to obtain the foreign object(s) which must
-      be kept consistent with this object.
+    * ``'foreign_obj'`` - a key to obtain the foreign object(s) which
+      must be kept consistent with this object.
 
-    * 'foreign_field' - the set field on the foreign object(s) which
-      must be kept consistent.
+    * ``'foreign_field'`` - the set field on the foreign object(s)
+      which must be kept consistent.
 
-    * 'foreign_value' - the value in the foreign set which corresponds
-      to this object.
+    * ``'foreign_value'`` - the value in the foreign set which
+      corresponds to this object.
 
-    * 'update' (triggered when the field is updated) - one of
-      'cascade' (update the foreign set(s)), 'remove' (remove the
-      foreign objects that correspond to the removed keys from the
-      db), or None (take no action).
+    * ``'update'`` (triggered when the field is updated) - one of
+      ``'cascade'`` (update the foreign set(s)), ``'remove'`` (remove
+      the foreign objects that correspond to the removed keys from the
+      db), or ``None`` (take no action).
 
-    * 'remove' (triggered when the object is removed from the db) -
-      one of 'cascade' (delete the foreign object(s)), 'update'
-      (remove this object reference from the foreign set(s)), or
-      None (take no action).
+    * ``'remove'`` (triggered when the object is removed from the db)
+      - one of ``'cascade'`` (delete the foreign object(s)),
+      ``'update'`` (remove this object reference from the foreign
+      set(s)), or ``None`` (take no action).
 
-    * 'invalidate' (triggered when the object in the cache is
-      invalidated) - either 'cascade' (invalidate the foreign
-      object(s)), or None (take no action).
+    * ``'invalidate'`` (triggered when the object in the cache is
+      invalidated) - either ``'cascade'`` (invalidate the foreign
+      object(s)), or ``None`` (take no action).
     """
 
 
     def keyset(self):
-        """This function is called to determine which keys under which
+        """This function is called to determine the keys under which
         to store this object.
 
-        By default, this method simply returns the 'keys' list.
+        By default, this method simply returns the ``keys`` list.
         """
         return self.keys
 
     def unique_keyset(self):
-        """This function is called to determine which keys under which
-        to store this object.
+        """This function is called to determine the unique keys under
+        which to store this object.
 
-        By default, this method simply returns the 'unique_keys' list.
+        By default, this method simply returns the ``unique_keys``
+        list.
         """
         return self.unique_keys
 
     @classmethod
     def reload_class(cls):
-        """Reload the class as if it was recreated from the metaclass.
-        """
+        """Reload the class as if it was recreated from the
+        metaclass."""
         # set up fields
         primary_key = None
         for key, value in cls.__dict__.iteritems():
@@ -176,11 +199,21 @@ class Gob(object):
 
 
     def __init__(self, session=None, _incoming_data=False, **kwdict):
+        """
+        Args:
+           ``session``: The session for this object.
+
+           ``dirty``: Whether this object contains any changes or not.
+
+           ``_path``: The path to this object.
+
+           The remainder of the arguments are interpreted as initial
+           values for the fields in this gob.
+        """
 
         self.persisted = _incoming_data
         """Indicates whether this instance has been persisted, or
-        whether it represents a new object.
-        """
+        whether it represents a new object."""
 
         self.session = session
         """The session for this object."""
@@ -319,7 +352,8 @@ class Gob(object):
     def save(self):
         """Save this object.
 
-        Note that you'll have to call commit() on the appropriate
+        Note that you'll have to call
+        :func:`gobpersist.session.Session.commit` on the appropriate
         session before the actual save will take place.
         """
         if self.persisted:
@@ -331,7 +365,8 @@ class Gob(object):
     def remove(self):
         """Remove this object from the database.
 
-        Note that you'll have to call commit() on the appropriate
+        Note that you'll have to call
+        :func:`gobpersist.session.Session.commit` on the appropriate
         session before the actual remove will take place.
         """
         self.session.remove(self)
@@ -372,7 +407,8 @@ class Gob(object):
         """Reverts the object to the persisted version.
 
         This does not clear any pending operations on this object; for
-        that you must use session.rollback()."""
+        that you must use
+        :func:`gobpersist.session.Session.rollback`."""
         for value in self.__dict__.itervalues():
             if isinstance(value, gobpersist.field.Field):
                 value.revert()
@@ -454,7 +490,7 @@ class Gob(object):
                               repr(consistence['remove']),
                               repr(consistence['invalidate'])) \
                            for consistence in self.consistency]),
-                       "consistency=[%s]" \
+                       "set_consistency=[%s]" \
                        % ', '.join([ \
                            "{'field': %s, 'foreign_obj': %s, 'foreign_field': %s," \
                            " 'foreign_value': %s, 'update': %s, 'remove': %s," \

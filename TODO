@@ -1,0 +1,21 @@
+* `session.GobTranslator.retrieve_to_myretrieve` -- should take a list
+  of tuples (identifiers) rather than a list of scalars, as one may
+  want to calculate on foreign fields.
+* `session.GobTranslator.mygob_to_gob` incorrectly assumes that no
+  translation is needed
+*
+  `session.Session.add`/`update`/`delete`/`add_collection`/`remove_collection`/`rollback` +
+  `paused_transactions` + `field.Field.dirty` all assume a lot of
+  naïve things, along the same lines as, e.g., that the same item will
+  never be added and subsequently deleted without committing the
+  transaction.  Basically, the transaction engine works for the basic
+  cases, but is fundamentally fubar.  However, there is a certain
+  simplicity to this implementation that is attractive, so it's not a
+  settled situation whether it should be changed or not.
+* `session.Session.commit` will create conditions for a commit based
+  on revision tags, but there is currently no way to call `commit()`
+  with a caller-set list of conditions.
+* Provide a symmetry between `session.StorageEngine.upload_iter` and
+  upload, so that storage engines can choose whichever is more
+  convenient to implement.
+* orderings ought to be able to handle quantified values

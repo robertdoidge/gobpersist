@@ -1,3 +1,24 @@
+# field.py - data scalar(-ish) types
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Data field types.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import re
 from copy import copy as base_clone
 import operator
@@ -14,8 +35,33 @@ class Field(object):
     def __init__(self, null=False, unique=False, primary_key=False,
                  name=None, default=None, default_update=None,
                  revision_tag=False, modifiable=True):
+        """
+        Args:
+           ``null`` (``bool``): Whether or not the field may be None.
+
+           ``unique`` (``bool``): Indicates that this field must be unique.
+
+           ``primary_key`` (``bool``): Indicates whether or not this field
+           is the primary key for this object.
+
+           ``default``: Callable or scalar indicating the default value
+           for this field.
+
+           ``default_update``: Callable indicating a transformation to
+           perform on unaltered values for update.
+
+              The callable will be called like this::
+
+                 value = default_update(value)
+
+           ``revision_tag`` (``bool``): Indicates whether this field should
+           be considered a revision tag or not.
+
+              A revision tag must be unchanged between reading the
+              object and updating/removing the object.
+        """
         self.null = null
-        """Whether or not the field may be None."""
+        """Whether or not the field may be ``None``."""
 
         self.unique = unique
         """Indicates that this field must be unique."""
@@ -28,8 +74,9 @@ class Field(object):
         """Callable indicating a transformation to perform on
         unaltered values for update.
 
-        The callable will be called like this:
-        value = default_update(value)
+        The callable will be called like this::
+
+           value = default_update(value)
         """
 
         self.revision_tag = revision_tag
@@ -61,9 +108,9 @@ class Field(object):
         self.immutable = False
         """Indicates that this field has become immutable.
         
-        This will be set True when the hash() function is called on
-        this object, whether explicitly or through the use of this
-        field as a dictionary key or a member of a set.
+        This will be set ``True`` when the :func:hash function is
+        called on this object, whether explicitly or through the use
+        of this field as a dictionary key or a member of a set.
         """
 
         self._name = None
@@ -160,8 +207,8 @@ class Field(object):
     def clone(self, clean_break=False):
         """Create a clone of this field.
 
-        Set clean_break to True in order to dissociate the copy from
-        the instance with which the original is associated.
+        Set ``clean_break`` to ``True`` in order to dissociate the
+        copy from the instance with which the original is associated.
         """
         ret = base_clone(self)
         ret.immutable = False
@@ -257,6 +304,10 @@ class TimestampField(DateTimeField):
     """A convenience wrapper for datetime that by default sets the
     value to the latest time it was persisted."""
     def __init__(self, *args, **kwargs):
+        """
+        Args:
+           See :class:`gobpersist.field.DateTimeField`
+        """
         if 'default' not in kwargs:
             kwargs['default'] = lambda: datetime.datetime.utcnow()
         if 'default_update' not in kwargs:
@@ -270,6 +321,19 @@ class StringField(Field):
 
     def __init__(self, encoding='binary', max_length=None, allow_empty=True,
                  validate = lambda x: True, *args, **kwargs):
+        """
+        Args:
+           ``max_length``: The maximum length for this string.
+
+           ``allow_empty``: Whether or not the empty string is
+           allowed.
+
+           ``validate_extra``: An extra callable for validation.
+
+           ``encoding``: The default encoding of this string.
+
+           See :class:`gobpersist.field.Field`
+        """
 
         self.max_length = max_length
         """The maximum length for this string."""
@@ -501,6 +565,18 @@ class IntegerField(NumericField):
     """Field representing all integer types."""
 
     def __init__(self, unsigned=False, precision=32, *args, **kwargs):
+        """
+        Args:
+           ``precision``: The precision, in bits, of this integer.
+
+           ``unsigned``: Whether or not this integer can be unsigned.
+
+           ``maximum``: The maximum value for this integer.
+
+           ``minimum``: The minimum value for this integer.
+
+           See :class:`gobpersist.field.Field`
+        """
         self.precision = precision
         """The precision, in bits, of this integer."""
 
@@ -554,6 +630,10 @@ class IncrementingField(IntegerField):
     """A convenience wrapper for IntegerField that by default
     increments the value by one every time it is persisted."""
     def __init__(self, *args, **kwargs):
+        """
+        Args:
+            See :class:`gobpersist.field.IntegerField`
+        """
         if 'default' not in kwargs:
             kwargs['default'] = 0
         if 'default_update' not in kwargs:
@@ -565,10 +645,19 @@ class RealField(NumericField):
     """Field representing all floating point types."""
 
     def __init__(self, precision='double', *args, **kwargs):
+        """
+        Args:
+           ``precision``: The precision of this floating point value:
+           "half", "single", "double" or "quad".
+
+           See :class:`gobpersist.field.NumericField`
+        """
         if precision not in ['half', 'single', 'double', 'quad']:
             raise ValueError("precision must be one of 'half', 'single'," \
                                  " 'double', or 'quad'")
         self.precision = precision
+        """The precision of this floating point value: "half",
+        "single", "double" or "quad"."""
         super(RealField, self).__init__(*args, **kwargs)
 
     def validate(self, value):
@@ -584,6 +673,12 @@ class EnumField(StringField):
     """A field to represent enumerations."""
 
     def __init__(self, choices, *args, **kwargs):
+        """
+        Args:
+           ``choices``: The possible values of this enumeration.
+
+           See :class:`gobpersist.field.StringField`
+        """
         self.choices = choices
         """The possible values of this enumeration."""
         super(EnumField, self).__init__(*args, **kwargs)
@@ -603,6 +698,10 @@ class UUIDField(StringField):
         '\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z')
 
     def __init__(self, *args, **kwargs):
+        """
+        Args:
+           See :class:`gobpersist.field.StringField`
+        """
         if 'encoding' not in kwargs:
             kwargs['encoding'] = 'us-ascii'
         if 'default' not in kwargs:
@@ -629,6 +728,12 @@ class MultiField(Field):
         return f
 
     def __init__(self, element_type, *args, **kwargs):
+        """
+        Args:
+           ``element_type``: The type for all the members of this MultiField.
+
+        See :class:`gobpersist.field.Field`
+        """
         self.field = element_type
         """The type for all the members of this MultiField."""
 
@@ -873,6 +978,25 @@ class Foreign(Field):
 
     def __init__(self, foreign_class, local_field, foreign_field, key=None,
                  name=None):
+        """
+        Args:
+           ``foreign_class``: The class for object(s) to which this
+           foreign field points.
+
+           ``foreign_field``: The key in the foreign class to which
+           this field refers.
+
+           ``local_field``: The key in the local class referring to
+           the foreign object(s).
+
+           ``key``: A database key for this relationship.
+
+              If key is None (the default), then this foreign
+              relationship is virtual and will be constructed through
+              a query.
+
+           See :class:`gobpersist.field.Field`
+        """
         self.foreign_class = foreign_class
         """The class for object(s) to which this foreign field points."""
 
@@ -883,7 +1007,7 @@ class Foreign(Field):
         """The key in the local class referring to the foreign object(s)."""
 
         self.key = key
-        """A key for this relationship.
+        """A database key for this relationship.
 
         If key is None (the default), then this foreign relationship
         is virtual and will be constructed through a query.

@@ -1,27 +1,54 @@
+# cache.py - A generic caching back end
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Abstract and proxy classes for database caching support.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import itertools
 
 import gobpersist.session
 import gobpersist.exception
 
 class CachingBackend(gobpersist.session.Backend):
-    """A generic caching back end, using any cache backend and any
-    backend for nonvolatile storage.
+    """A generic caching back end, using any cache back end and any
+    back end for nonvolatile storage.
 
     By default this class will manage cache misses by simply passing
     the request on to the back end and storing the retrieved value in
-    the cache.  However, if the backend wishes to prefill caches, it
-    can define a method, 'cache_refill', taking the same parameters as
-    query, that will manage the cache refill.  After the cache has
-    been refilled, the object should be available in the cache,
-    although cache invalidation may cause the next request to fail.
-    In that case, the caching query will loop and try to call
-    cache_refill again.
+    the cache.  However, if the back end wishes to prefill caches, it
+    can define a method, ``cache_refill``, taking the same parameters
+    as :func:`Cache.query`, that will manage the
+    cache refill.  After the cache has been refilled, the object
+    should be available in the cache, although cache invalidation may
+    cause the next request to fail.  In that case, the caching query
+    will loop and try to call ``cache_refill`` again.
     """
     def __init__(self, cache, backend):
+        """
+        Args:
+           ``cache``: The back end which is to operate as a cache.
+
+           ``backend``: The "real" back end for the cache.
+        """
         self.backend = backend
-        """The "real" backend for the cache."""
+        """The "real" back end for the cache."""
         self.cache = cache
-        """The backend which is to operate as a cache."""
+        """The back end which is to operate as a cache."""
 
 
     def query(self, cls, key=None, key_range=None, query=None, retrieve=None,

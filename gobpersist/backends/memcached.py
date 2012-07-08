@@ -1,3 +1,25 @@
+# memcached.py - Back end interface to memcached
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Interface to the memcached cache or anything else which speaks the
+memcached protocol.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import time
 import cPickle as pickle
 import datetime
@@ -28,6 +50,46 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
                  serializer=PickleWrapper, lock_prefix='_lock',
                  pool=default_pool, separator='.', lock_tries=8,
                  lock_backoff=0.25, *args, **kwargs):
+        """
+        Args:
+           ``servers``: The ``servers`` argument for the memcached
+           client -- a list of servers over which to distribute data.
+
+           ``expiry``: The expiry time for all values set during this
+           session, in number of seconds.
+
+           ``binary``: Whether to use the binary or the http memcached
+           protocol.
+
+           ``serializer``: An object which provides serialization of
+           gobpersist data.
+
+              Must provide ``loads`` and ``dumps``.
+
+           ``lock_prefix``: A string to prepend to a key value to
+           represent the lock for that key.
+
+           ``pool``: The pool of memcached connections.
+
+           ``separator``: The separator between key elements.
+
+              The default is '.'.
+
+           ``lock_tries``: The number of times to try locking before
+           forcibly acquiring all locks.
+
+              Since there's no way to monitor other processes to make
+              sure they've properly cleaned up, this prevents a
+              permanent object lock by a crashed or hung process.  The
+              default is 8.
+
+           ``lock_backoff``: The amount of time, in seconds, for the
+           locking mechanism to wait between tries.
+
+              The default is 0.25.  The maximum wait time for any lock
+              acquisition is ``lock_tries * lock_backoff``, so
+              consider this value when fine-tuning these.
+        """
         behaviors = {'ketama': True}
         for key, value in kwargs.iteritems():
             behaviors[key] = value
@@ -40,7 +102,9 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         """The pool of memcached connections."""
 
         self.serializer = serializer
-        """The serializer for this back end."""
+        """An object which provides serialization of gobpersist data.
+
+        Must provide ``loads`` and ``dumps``."""
 
         self.lock_prefix = lock_prefix
         """A string to prepend to a key value to represent the lock
@@ -70,7 +134,7 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         to wait between tries.
 
         The default is 0.25.  The maximum wait time for any lock
-        acquisition is lock_tries * lock_backoff, so consider this
+        acquisition is ``lock_tries * lock_backoff``, so consider this
         value when fine-tuning these.
         """
 
@@ -406,6 +470,22 @@ class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
                  lock_backoff=0.25, integrity_prefix='_INTEGRITY_',
                  shadow_prefix='_SHADOW_',
                  *args, **kwargs):
+        """
+        Args:
+           ``integrity_prefix``: A prefix to add to a key to create
+           the integrity key for that key.
+
+              Integrity keys keep lists of cached keys where when the
+              value of the key is changed, the cached keys should be
+              invalidated.
+
+           ``shadow_prefix``: A prefix to add to a key to create the shadow key for
+           that key.
+
+             Shadow keys are the keys representing everything
+             currently in the cache, rather than in whatever data
+             source the cache represents.
+        """
 
         self.integrity_prefix = integrity_prefix
         """A prefix to add to a key to create the integrity key for

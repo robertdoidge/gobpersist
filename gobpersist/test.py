@@ -1,18 +1,34 @@
 #!/usr/bin/env python
+# test.py - Unit tests for Gobpersist
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+
+import sys
 if __name__ == '__main__':
     import os.path
-    import sys
 
     libdir = os.path.join(os.path.dirname(__file__), '..')
     sys.path.insert(0, libdir)
-
 
 import unittest
 import datetime
 import iso8601
 import uuid
+import warnings
 
-import gserialize
 import hashlib
 import operator
 
@@ -24,6 +40,8 @@ from gobpersist import storage
 from gobpersist.backends import memcached
 from gobpersist.backends import gobkvquerent
 from gobpersist.backends import cache
+
+warnings.simplefilter('default')
 
 sys.setrecursionlimit(4000)
 

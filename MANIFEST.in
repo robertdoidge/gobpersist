@@ -1,4 +1,2 @@
 recursive-include gobpersist *
-exclude gobpersist/TODO
-exclude gobpersist/sample.txt
-exclude gobpersist/test.py
+include INSTALL LICENSE README setup.cfg setup.py TODO

@@ -1,11 +1,31 @@
+# session.py - An abstract individual connection with a database
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""Single-thread, individual "connections" to the database back end.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import gobpersist.field
 
 class GobTranslator(object):
-    """Abstract class to translate gobs for the backend."""
+    """Abstract class to translate gobs for the back end."""
 
     def gob_to_mygob(self, gob, only_dirty=False):
-        """Turn a gob into a object appropriate for the
-        backend."""
+        """Turn a gob into a object appropriate for the back end."""
         mygob = {}
         for key in dir(gob):
             f = getattr(gob, key)
@@ -16,8 +36,8 @@ class GobTranslator(object):
         return mygob
 
     def query_to_myquery(self, cls, query):
-        """Transform a query into a query that is more palatable to the
-        backend."""
+        """Transform a query into a query that is more palatable to
+        the back end."""
         ret = {}
         for key, value in query.iteritems():
             if key in ('eq', 'ne', 'gt', 'lt', 'ge', 'le'):
@@ -75,14 +95,14 @@ class GobTranslator(object):
         return ret
 
     def key_to_mykey(self, key, use_persisted_version=False):
-        """Transforms a key into something more palatable to the
-        backend."""
+        """Transforms a key into something more palatable to the back
+        end."""
         return tuple([self.value_to_myvalue(keyelem, use_persisted_version) \
                           for keyelem in key])
 
     def retrieve_to_myretrieve(self, cls, retrieve):
-        """Transform retrieve request into something more palatable for the
-        backend."""
+        """Transform retrieve request into something more palatable
+        for the back end."""
         ret = set()
         for retrieval in retrieve:
             if not isinstance(retrieval, gobpersist.field.Field):
@@ -91,7 +111,8 @@ class GobTranslator(object):
         return ret
 
     def order_to_myorder(self, cls, order):
-        """Transform order into something more palatable for the backend."""
+        """Transform order into something more palatable for the back
+        end."""
         ret = []
         for ordering in order:
             if not isinstance(ordering, dict) or not len(ordering) == 1:
@@ -108,7 +129,7 @@ class GobTranslator(object):
 
     def idnt_to_myidnt(self, cls, idnt):
         """Turns an identifier into something more palatable to the
-        backend."""
+        back end."""
         ret = []
         for pathelem in idnt:
             if cls is None:
@@ -144,17 +165,21 @@ class GobTranslator(object):
         return retfield
 
     def field_to_myfield(self, f, use_persisted_version=False):
-        """Transform a field into a value appropriate for the backend.
+        """Transform a field into a value appropriate for the back
+        end.
 
-        Serialization should be done in here or in value_to_myvalue.
+        Serialization should be done in here or in
+        ``value_to_myvalue``.
         """
         return self.value_to_myvalue(f.value if not use_persisted_version \
                                          else f.persisted_value)
 
     def value_to_myvalue(self, value, use_persisted_version=False):
-        """Transform a value into a value appropriate for the backend.
+        """Transform a value into a value appropriate for the back
+        end.
 
-        Serialization should be done in here or in value_to_myvalue.
+        Serialization should be done in here or in
+        ``field_to_myfield``.
         """
         if isinstance(value, gobpersist.field.Field):
             return self.field_to_myfield(value, use_persisted_version)
@@ -168,20 +193,29 @@ class GobTranslator(object):
     def mygob_to_gob(self, cls, dictionary):
         """Create a gob from a dictionary.
 
-        TODO: This should retransform the keys it gets into their appropriate
-        values based on the field.name attributes in the class.
+        TODO: This should retransform the keys it gets into their
+        appropriate values based on the ``field.name`` attributes in
+        the class.
         """
         return cls(self, _incoming_data=True, **dictionary)
 
 
 class Session(GobTranslator):
-    """Generic session object.  Delegates whatever possible to its backend"""
+    """Generic session object.  Delegates whatever possible to its back end"""
 
     def __init__(self, backend, storage_engine=None):
+        """
+        Args:
+           ``backend``: The back end for this session.
+
+           ``storage_engine``: The storage engine for this session, if
+           any.
+        """
+
         self.collections = {}
         """Registry for all items this session currently knows about.
 
-        Populated as [class_key][obj.primary_key] = obj
+        Populated as ``collections[class_key][obj.primary_key] = obj``.
         """
 
         self.operations = {
@@ -195,8 +229,7 @@ class Session(GobTranslator):
 
         self.paused_transactions = []
         """A list of nested transactions, not including the current
-        one.
-        """
+        one."""
 
         self.backend = backend
         """The back end for this session."""
@@ -233,7 +266,7 @@ class Session(GobTranslator):
     def add_collection(self, path):
         """Add an empty collection at path.
 
-        For many backends, this is a no op.
+        For many back ends, this is a no op.
         """
         self.operations['collection_additions'].add(path)
 
@@ -273,7 +306,7 @@ class Session(GobTranslator):
     def _update_object(self, gob, updater, force=False):
         """Updates an object to have the values of another one.
 
-        Dirty values are not overwritten, unless force is True.
+        Dirty values are not overwritten, unless ``force`` is ``True``.
         """
         for key in dir(gob):
             value = getattr(gob, key)
@@ -368,11 +401,11 @@ class Session(GobTranslator):
     def rollback(self, revert=False):
         """Roll back the transaction.
 
-        If revert is False (the default), then individual gobs are not
-        reverted, and only the list of pending operations is cleared.
-        Note that revert is not aware of nested transactions, and will
-        not properly interact with them.  Its use in such cases is
-        highly discouraged.
+        If ``revert`` is ``False`` (the default), then individual gobs
+        are not reverted, and only the list of pending operations is
+        cleared.  Note that revert is not aware of nested
+        transactions, and will not properly interact with them.  Its
+        use in such cases is highly discouraged.
         """
         if len(self.paused_transactions) > 0:
             self.operations = self.paused_transactions.pop()
@@ -410,7 +443,7 @@ class Session(GobTranslator):
     def download(self, gob):
         """Download the file from the gob.
 
-        Returns and iterable containing the data.
+        Returns an iterable containing the data.
         """
         gob2, iterable = self.storage_engine.download(gob)
         self._update_object(gob, gob2, True)
@@ -432,29 +465,30 @@ class Backend(GobTranslator):
                collection_additions=[], collection_removals=[]):
         """Atomically commit some changeset to the db.
 
-        The arguments additions, updates, and removals are
+        The arguments ``additions``, ``updates``, and ``removals`` are
         dictionaries with the following keys:
         
-        * gob -- the gob to perform the action on
+        * ``'gob'`` - the gob to perform the action on
         
-        * condition -- a query to be run against the gob as it exists
-          in the db to determine whether to perform the action or not.
-          Absent for add.
+        * ``'condition'`` - a query to be run against the gob as it
+          exists in the db to determine whether to perform the action
+          or not.  Absent for add.
 
-        * add_keys -- additional keys under which the object
+        * ``'add_keys'`` - additional keys under which the object
           should be stored.
 
-        * add_unique_keys -- additional unique keys under which
+        * ``'add_unique_keys'`` - additional unique keys under which
           the object should be stored.
 
-        * remove_keys -- additional keys from which the object should
-          be removed.
+        * ``'remove_keys'`` -- additional keys from which the object
+          should be removed.
 
-        * remove_unique_keys -- additional unique keys which should be
-          remoived.
+        * ``'remove_unique_keys'`` -- additional unique keys from which
+          the object should be remoived.
 
-        key_additions and key_removals should be lists of keys to
-        collection keys to add empty or to remove entirely.
+        ``collection_additions`` and ``collection_removals`` should be
+        lists of keys to collections, to add empty collections or to
+        remove a collection entirely.
         """
         raise NotImplementedError("Backend type '%s' does not implement" \
                                       " commit" % self.__class__.__name__)

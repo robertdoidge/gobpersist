@@ -1,3 +1,26 @@
+# storage.py - Abstract classes for use in storing large amounts of
+# binary data.
+# Copyright (C) 2012 Accellion, Inc.
+#
+# This library is free software; you can redistribute it and/or modify
+# it under the terms of the GNU Lesser General Public License as
+# published by the Free Software Foundation; version 2.1.
+#
+# This library is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Lesser General Public License for more details.
+#
+# You should have received a copy of the GNU Lesser General Public
+# License along with this library; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301 USA
+"""The ``Storage`` class and utility classes for common needs of a
+:class:`gobpersist.session.StorageEngine`.
+
+.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+"""
+
 import hashlib
 import os
 
@@ -6,6 +29,12 @@ class SizeFile(object):
     and set storable.size accordingly."""
 
     def __init__(self, storable, fp):
+        """
+        Args:
+           ``storable``: The storable which this file represents.
+
+           ``fp``: The :class:`file` for this storable.
+        """
         self.fp = fp
         self.storable = storable
 
@@ -23,6 +52,12 @@ class LimitedFile(object):
     data can be read."""
 
     def __init__(self, storable, fp):
+        """
+        Args:
+           ``storable``: The storable which this file represents.
+
+           ``fp``: The :class:`file` for this storable.
+        """
         self.fp = fp
         self.remaining = storable.size.value
 
@@ -41,11 +76,11 @@ class LimitedFile(object):
 
 
 class Storable(object):
-    """Addon subclass for Gobs to give them a data fork, sorta like in
-    the HFS filesystem.
+    """Addon subclass for a :class:`gobpersist.gob.Gob` to give it a
+    data fork, sorta like in the HFS filesystem.
 
-    Assumes that the object has the fields 'size' and 'mime_type' defined
-    somehow.
+    Assumes that the object has the fields ``size`` and ``mime_type``
+    defined somehow.
     """
 
     def __init__(self, *args, **kwargs):
@@ -85,6 +120,12 @@ class MD5File(object):
     sum."""
 
     def __init__(self, md5, fp):
+        """
+        Args:
+           ``md5``: An instance of :class:`hashlib.md5`.
+
+           ``fp``: The :class:`file` for this storable.
+        """
         self.fp = fp
         self.md5 = md5
 
@@ -98,8 +139,9 @@ class MD5File(object):
 
 
 class MD5Storable(Storable):
-    """Superclass of storable that will set a field named 'md5sum' to
-    the md5 sum of the uploaded data."""
+    """Subclass of :class:`Storable` that will
+    automatically set a field named ``md5sum`` to the md5 sum of the
+    uploaded data."""
 
     def __init__(self, *args, **kwargs):
         super(MD5Storable, self).__init__(*args, **kwargs)

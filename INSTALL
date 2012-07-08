@@ -1,0 +1,15 @@
+To install Gobpersist, make sure you have Python 2.7 or greater
+installed. Then run this command from the command prompt:
+
+    python setup.py install
+
+If you're upgrading from a previous version, you need to remove it
+first.
+
+This project uses the iso8601 module, available at XXXXXX.
+
+Though it is not a requirement, it is highly suggested that you have
+Distribute [http://packages.python.org/distribute] installed.
+
+For custom installation locations, please see:
+http://packages.python.org/distribute/easy_install.html#custom-installation-locations
