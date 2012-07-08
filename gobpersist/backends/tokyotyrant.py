@@ -16,7 +16,7 @@
 # 02110-1301 USA
 """Back end interface to Tokyo Tyrant.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com
 """
 
 import time

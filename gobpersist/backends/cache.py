@@ -16,7 +16,7 @@
 # 02110-1301 USA
 """Abstract and proxy classes for database caching support.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import itertools

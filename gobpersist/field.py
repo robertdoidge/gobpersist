@@ -16,7 +16,7 @@
 # 02110-1301 USA
 """Data field types.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import re
@@ -108,7 +108,7 @@ class Field(object):
         self.immutable = False
         """Indicates that this field has become immutable.
         
-        This will be set ``True`` when the :func:hash function is
+        This will be set ``True`` when the :func:`hash` function is
         called on this object, whether explicitly or through the use
         of this field as a dictionary key or a member of a set.
         """
@@ -306,7 +306,7 @@ class TimestampField(DateTimeField):
     def __init__(self, *args, **kwargs):
         """
         Args:
-           See :class:`gobpersist.field.DateTimeField`
+           See :class:`DateTimeField`
         """
         if 'default' not in kwargs:
             kwargs['default'] = lambda: datetime.datetime.utcnow()
@@ -332,7 +332,7 @@ class StringField(Field):
 
            ``encoding``: The default encoding of this string.
 
-           See :class:`gobpersist.field.Field`
+           See :class:`Field`
         """
 
         self.max_length = max_length
@@ -575,7 +575,7 @@ class IntegerField(NumericField):
 
            ``minimum``: The minimum value for this integer.
 
-           See :class:`gobpersist.field.Field`
+           See :class:`Field`
         """
         self.precision = precision
         """The precision, in bits, of this integer."""
@@ -632,7 +632,7 @@ class IncrementingField(IntegerField):
     def __init__(self, *args, **kwargs):
         """
         Args:
-            See :class:`gobpersist.field.IntegerField`
+            See :class:`IntegerField`
         """
         if 'default' not in kwargs:
             kwargs['default'] = 0
@@ -650,7 +650,7 @@ class RealField(NumericField):
            ``precision``: The precision of this floating point value:
            "half", "single", "double" or "quad".
 
-           See :class:`gobpersist.field.NumericField`
+           See :class:`NumericField`
         """
         if precision not in ['half', 'single', 'double', 'quad']:
             raise ValueError("precision must be one of 'half', 'single'," \
@@ -677,7 +677,7 @@ class EnumField(StringField):
         Args:
            ``choices``: The possible values of this enumeration.
 
-           See :class:`gobpersist.field.StringField`
+           See :class:`StringField`
         """
         self.choices = choices
         """The possible values of this enumeration."""
@@ -700,7 +700,7 @@ class UUIDField(StringField):
     def __init__(self, *args, **kwargs):
         """
         Args:
-           See :class:`gobpersist.field.StringField`
+           See :class:`StringField`
         """
         if 'encoding' not in kwargs:
             kwargs['encoding'] = 'us-ascii'
@@ -732,7 +732,7 @@ class MultiField(Field):
         Args:
            ``element_type``: The type for all the members of this MultiField.
 
-        See :class:`gobpersist.field.Field`
+        See :class:`Field`
         """
         self.field = element_type
         """The type for all the members of this MultiField."""
@@ -995,7 +995,7 @@ class Foreign(Field):
               relationship is virtual and will be constructed through
               a query.
 
-           See :class:`gobpersist.field.Field`
+           See :class:`Field`
         """
         self.foreign_class = foreign_class
         """The class for object(s) to which this foreign field points."""

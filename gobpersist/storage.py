@@ -18,7 +18,7 @@
 """The ``Storage`` class and utility classes for common needs of a
 :class:`gobpersist.session.StorageEngine`.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import hashlib

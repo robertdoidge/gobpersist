@@ -18,7 +18,7 @@
 
 Only some of these make it to the outside world.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 class NotFound(Exception):

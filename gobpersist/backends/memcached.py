@@ -17,7 +17,7 @@
 """Interface to the memcached cache or anything else which speaks the
 memcached protocol.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import time

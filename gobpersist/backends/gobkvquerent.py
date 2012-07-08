@@ -17,7 +17,7 @@
 """Support for classes that aren't able to implement complex queries
 (that is, key--value stores).
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import operator

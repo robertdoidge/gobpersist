@@ -17,7 +17,7 @@
 """Convenience wrappers for defining and interacting with a whole
 database schema.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import gobpersist.gob

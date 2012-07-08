@@ -16,7 +16,7 @@
 # 02110-1301 USA
 """Connection-sharing pools for use by session back ends.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import thread

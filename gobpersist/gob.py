@@ -16,7 +16,7 @@
 # 02110-1301 USA
 """Gobs -- objects that will persist in the database.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import gobpersist.field

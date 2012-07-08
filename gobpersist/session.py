@@ -16,7 +16,7 @@
 # 02110-1301 USA
 """Single-thread, individual "connections" to the database back end.
 
-.. moduleauthor:: Evan Buswell <evan.buswell@accellion.com>
+.. codeauthor:: Evan Buswell <evan.buswell@accellion.com>
 """
 
 import gobpersist.field
