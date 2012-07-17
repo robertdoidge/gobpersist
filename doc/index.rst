@@ -1,18 +1,23 @@
 .. _index_toplevel:
 
-========================
-Gobpersist API Reference
+Gobpersist Documentation
 ========================
 
 Contents:
 
 .. toctree::
-   :maxdepth: 99
+   :maxdepth: 1
 
-   gobpersist
+   introduction
+   schema
+   query
+   session
+   storage
+   backend
+   api/index
+   todo
 
-
-Indices and tables
+Indices and Tables
 ==================
 
 * :ref:`genindex`

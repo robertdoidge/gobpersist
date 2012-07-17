@@ -3,37 +3,37 @@
 
 .. automodule:: gobpersist.exception
 
-:class:`NotFound` Exception
+:exc:`NotFound` Exception
 -------------------------------
 
 .. autoexception:: gobpersist.exception.NotFound
     :show-inheritance:
 
-:class:`ConditionFailed` Exception
+:exc:`ConditionFailed` Exception
 --------------------------------------
 
 .. autoexception:: gobpersist.exception.ConditionFailed
     :show-inheritance:
 
-:class:`QueryError` Exception
+:exc:`QueryError` Exception
 ---------------------------------
 
 .. autoexception:: gobpersist.exception.QueryError
     :show-inheritance:
 
-:class:`UnsupportedError` Exception
+:exc:`UnsupportedError` Exception
 ---------------------------------------
 
 .. autoexception:: gobpersist.exception.UnsupportedError
     :show-inheritance:
 
-:class:`Corruption` Exception
+:exc:`Corruption` Exception
 --------------------------------
 
 .. autoexception:: gobpersist.exception.Corruption
     :show-inheritance:
 
-:class:`Deadlock` Exception
+:exc:`Deadlock` Exception
 -------------------------------
 
 .. autoexception:: gobpersist.exception.Deadlock

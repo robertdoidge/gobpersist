@@ -203,9 +203,8 @@ class Gob(object):
         Args:
            ``session``: The session for this object.
 
-           ``dirty``: Whether this object contains any changes or not.
-
-           ``_path``: The path to this object.
+           ``_incoming_data``: used by the session to skip checking of
+           values currently in the database.
 
            The remainder of the arguments are interpreted as initial
            values for the fields in this gob.

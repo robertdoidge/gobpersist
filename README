@@ -1,45 +1,28 @@
-Django is a high-level Python Web framework that encourages rapid development
-and clean, pragmatic design. Thanks for checking it out.
+Gobpersist (Generic OBject PERSISTence) is an object persistence layer
+for NoSQL, but it is also much more than that.
+
+Gobpersist is modeled on the Django persistence layer, and in use
+you'll find that it mostly behaves like a conventional
+object/relational mapper (ORM).  However, unlike a conventional ORM,
+Gobpersist does not insist that its data storage engine implements
+SQL, or that it follows a relational model at all.  Despite this,
+Gobpersist intends to provide:
+
+* A complete SQL-like interface to querying its data.
+* ORM-style object peristence.
+* Atomic commits, depending on the atomicity of the back end.
+* Transparent support for caching.
+* Optional support for a separate storage engine to support very large
+  blobs.
+* Quick and easy development of interfaces to any back end.
 
 All documentation is in the "docs" directory and online at
-http://docs.djangoproject.com/en/dev/. If you're just getting started, here's
-how we recommend you read the docs:
+http://gobpersist.github.com.
 
-* First, read docs/intro/install.txt for instructions on installing Django.
+To contribute to Gobpersist, or to get more help:
 
-* Next, work through the tutorials in order (docs/intro/tutorial01.txt,
-  docs/intro/tutorial02.txt, etc.).
+* Join the gobpersist mailing list, or read the archives, at
+  http://groups.google.com/group/gobpersist.
 
-* If you want to set up an actual deployment server, read
-  docs/howto/deployment/index.txt for instructions.
-
-* You'll probably want to read through the topical guides (in docs/topics)
-  next; from there you can jump to the HOWTOs (in docs/howto) for specific
-  problems, and check out the reference (docs/ref) for gory details.
-
-* See docs/README for instructions on building an HTML version of the docs.
-
-Docs are updated rigorously. If you find any problems in the docs, or think they
-should be clarified in any way, please take 30 seconds to fill out a ticket
-here:
-
-http://code.djangoproject.com/newticket
-
-To get more help:
-
-* Join the #django channel on irc.freenode.net. Lots of helpful people hang out
-  there. Read the archives at http://django-irc-logs.com/.
-
-* Join the django-users mailing list, or read the archives, at
-  http://groups.google.com/group/django-users.
-
-To contribute to Django:
-
-* Check out http://www.djangoproject.com/community/ for information about
-  getting involved.
-
-To run Django's test suite:
-
-* Follow the instructions in the "Unit tests" section of
-  docs/internals/contributing/writing-code/unit-tests.txt, published online at
-  https://docs.djangoproject.com/en/dev/internals/contributing/writing-code/unit-tests/#running-the-unit-tests
+Gobpersist was developed by `Accellion <http://www.accellion.com`_ and
+is released under the LGPLv2.1 license.

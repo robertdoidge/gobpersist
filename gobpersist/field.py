@@ -328,7 +328,7 @@ class StringField(Field):
            ``allow_empty``: Whether or not the empty string is
            allowed.
 
-           ``validate_extra``: An extra callable for validation.
+           ``validate``: An extra callable for validation.
 
            ``encoding``: The default encoding of this string.
 

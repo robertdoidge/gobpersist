@@ -10,6 +10,9 @@
     :members:
     :private-members:
 
+:class:`SchemaCollection` Class
+-------------------------------
+
 .. autoclass:: gobpersist.schema.SchemaCollection
     :members:
     :private-members:
