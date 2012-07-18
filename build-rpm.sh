@@ -21,8 +21,8 @@ DIST_DIR="$PWD/dist"
 BUILD_DIR="$PWD/build"
 BUILD_SUBDIRS="BUILD RPMS SPECS SOURCES SRPMS TMP install"
 
-MAJOR_VERSION=$(grep " version " $SPEC_FILE | sed "s/.* //")
-MINOR_REV=$(grep " release " $SPEC_FILE | sed "s/.* //")
+MAJOR_VERSION=$(grep "%define version" $SPEC_FILE | sed "s/.* //")
+MINOR_REV=$(grep "%define release" $SPEC_FILE | sed "s/.* //")
 TGZ_WORK_DIR="$NAME-$MAJOR_VERSION"
 TGZ_FILE="$NAME-$MAJOR_VERSION.tar.gz"
 RPM_FILE="$NAME-$MAJOR_VERSION-$MINOR_REV.noarch.rpm"
