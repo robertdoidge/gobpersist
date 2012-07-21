@@ -1,16 +1,20 @@
 .. _todo:
 
-To-do list
+To-Do List
 ==========
 
 .. currentmodule:: gobpersist
 
+* Make many-to-many mappings work without explicit pivot tables.
+  :attr:`gob.Gob.set_consistency` is a start...
 * :meth:`session.GobTranslator.retrieve_to_myretrieve` -- should take
   a list of tuples (identifiers) rather than a list of scalars, as one
   may want to calculate on foreign fields.
 * :meth:`session.GobTranslator.mygob_to_gob` incorrectly assumes that
-  no translation is needed
-* :meth:`session.Session.add`/`update`/`delete`/`add_collection`/`remove_collection`/`rollback` +
+  no translation is needed.  This is the cause of the current
+  uselessness of the `name` parameter on field creation.
+* :meth:`session.Session.`\
+  `add`/`update`/`delete`/`add_collection`/`remove_collection`/`rollback` +
   `paused_transactions` + :meth:`field.Field.dirty` all assume a lot
   of naïve things, along the same lines as, e.g., that the same item
   will never be added and subsequently deleted without committing the
@@ -29,6 +33,8 @@ To-do list
   convenient to implement.
 * Orderings ought to be able to handle quantified values.
 * Create a generic file storage engine.
+* Move more of the key handling features of the back end into
+  session.commit()
 
 Tokyo Tyrant
 ------------

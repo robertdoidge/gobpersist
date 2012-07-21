@@ -46,7 +46,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = u'Gobpersist'
-copyright = u'2012, Acccellion <open-source@accellion.com>'
+copyright = u'2012, Acccellion <opensource@accellion.com>'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -252,8 +252,8 @@ texinfo_documents = [
 # Bibliographic Dublin Core info.
 epub_title = u'Gobpersist'
 epub_author = u'Evan Buswell <evan.buswell@accellion.com>'
-epub_publisher = u'Accellion <open-source@accellion.com>'
-epub_copyright = u'2012, Accellion <open-source@accellion.com>'
+epub_publisher = u'Accellion <opensource@accellion.com>'
+epub_copyright = u'2012, Accellion <opensource@accellion.com>'
 
 # The language of the text. It defaults to the language option
 # or en if the language is not set.

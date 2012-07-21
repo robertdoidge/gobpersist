@@ -333,6 +333,16 @@ class Session(GobTranslator):
 
     def commit(self):
         """Commit all pending changes."""
+        if len(self.paused_transactions) > 0:
+            newops = self.operations
+            self.operations = self.paused_transactions.pop()
+            self.operations['additions'].update(newops['additions'])
+            self.operations['removals'].update(newops['removals'])
+            self.operations['updates'].update(newops['updates'])
+            self.operations['collection_additions'].update(newops['collection_additions'])
+            self.operations['collection_removals'].update(newops['collection_removals'])
+            return
+
         additions = [{'gob': gob} for gob in self.operations['additions']]
 
         updates = []
@@ -386,16 +396,13 @@ class Session(GobTranslator):
         for operation in ('additions', 'removals', 'updates'):
             for gob in self.operations[operation]:
                 gob.mark_persisted()
-        if len(self.paused_transactions) > 0:
-            self.operations = self.paused_transactions.pop()
-        else:
-            self.operations = {
-                'additions': set(),
-                'removals': set(),
-                'updates': set(),
-                'collection_additions': set(),
-                'collection_removals': set()
-                }
+        self.operations = {
+            'additions': set(),
+            'removals': set(),
+            'updates': set(),
+            'collection_additions': set(),
+            'collection_removals': set()
+            }
 
 
     def rollback(self, revert=False):
@@ -419,7 +426,7 @@ class Session(GobTranslator):
                 }
         if revert:
             for collection in self.collections.itervalues():
-                for gob in self.object.itervalues():
+                for gob in collection.itervalues():
                     gob.revert()
 
     def upload(self, gob, fp):

@@ -113,7 +113,8 @@ class Gob(object):
 
     set_consistency = []
     """Consistency requirements (triggers) for a given object,
-    pertaining to sets of keys rather than individual keys.
+    pertaining to sets of keys rather than individual keys.  (Not yet
+    implemented.  See :ref:`todo`.)
 
     This should be a list of dictionaries, with the following values:
 
@@ -146,7 +147,7 @@ class Gob(object):
     """
 
 
-    def keyset(self):
+    def keyset(self, use_persisted_version=False):
         """This function is called to determine the keys under which
         to store this object.
 
@@ -154,7 +155,7 @@ class Gob(object):
         """
         return self.keys
 
-    def unique_keyset(self):
+    def unique_keyset(self, use_persisted_version=False):
         """This function is called to determine the unique keys under
         which to store this object.
 

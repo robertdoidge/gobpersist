@@ -16,6 +16,8 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
 # 02110-1301 USA
 
+# FIXME: we need to test the various initialize_db functions
+
 import sys
 if __name__ == '__main__':
     import os.path
@@ -32,99 +34,203 @@ import warnings
 import hashlib
 import operator
 
-from gobpersist import gob
-from gobpersist import field
-from gobpersist import schema
-from gobpersist import session
-from gobpersist import storage
-from gobpersist.backends import memcached
-from gobpersist.backends import gobkvquerent
-from gobpersist.backends import cache
+import gobpersist.gob
+import gobpersist.field
+import gobpersist.schema
+import gobpersist.session
+import gobpersist.storage
+import gobpersist.exception
+import gobpersist.backends.memcached
 
 warnings.simplefilter('default')
 
 sys.setrecursionlimit(4000)
 
 def get_gob_class():
-    class GobTest(gob.Gob):
-        boolean_field = field.BooleanField()
-        datetime_field = field.DateTimeField()
-        timestamp_field = field.TimestampField(unique=True)
-        string_field = field.StringField()
-        integer_field = field.IntegerField()
-        incrementing_field = field.IncrementingField()
-        real_field = field.RealField()
-        enum_field = field.EnumField(choices=('test1','test2'))
-        uuid_field = field.UUIDField()
-        # list_field = field.ListField(element=field.IntegerField())
-        # set_field = field.SetField(element=field.IntegerField())
-        def keyset(self):
-            if self.parent_key == None:
+    class GobTest(gobpersist.gob.Gob):
+        boolean_field = gobpersist.field.BooleanField()
+        datetime_field = gobpersist.field.DateTimeField()
+        timestamp_field = gobpersist.field.TimestampField(unique=True)
+        string_field = gobpersist.field.StringField(encoding='UTF-8')
+        integer_field = gobpersist.field.IntegerField()
+        incrementing_field = gobpersist.field.IncrementingField()
+        real_field = gobpersist.field.RealField()
+        enum_field = gobpersist.field.EnumField(choices=('test1','test2'))
+        uuid_field = gobpersist.field.UUIDField()
+        list_field = gobpersist.field.ListField(element_type=gobpersist.field.IntegerField())
+        set_field = gobpersist.field.SetField(element_type=gobpersist.field.IntegerField())
+
+        def keyset(self, use_persisted_version=False):
+            if (self.parent_key.persisted_value
+                        if use_persisted_version
+                    else self.parent_key) == None:
                 return [self.coll_key] + self.keys
             else:
                 return self.keys
 
-        my_key = field.UUIDField(primary_key=True)
-        parent_key = field.UUIDField(null=True)
+        my_key = gobpersist.field.UUIDField(primary_key=True)
+        parent_key = gobpersist.field.UUIDField(null=True)
 
-        parent = field.ForeignObject(foreign_class='self',
-                                     local_field='parent_key',
-                                     foreign_field='primary_key')
-        children = field.ForeignCollection(foreign_class='self',
-                                           local_field='primary_key',
-                                           foreign_field='parent_key',
-                                           key=('gobtests', my_key,
-                                                'children'))
+        parent = gobpersist.field.ForeignObject(foreign_class='self',
+                                                local_field='parent_key',
+                                                foreign_field='primary_key',
+                                                key=('gobtests', parent_key))
+        children = gobpersist.field.ForeignCollection(foreign_class='self',
+                                                      local_field='primary_key',
+                                                      foreign_field='parent_key',
+                                                      key=('gobtests', my_key,
+                                                           'children'))
 
-        keys = [('self', parent_key, 'children')]
+        keys = [('gobtests', parent_key, 'children')]
         unique_keys = [('gobtests_by_timestamp', timestamp_field)]
 
-        pass
+        consistency=[{
+                'field': my_key,
+                'foreign_class': 'self',
+                'foreign_obj': ('gobtests', my_key, 'children'),
+                'foreign_field': 'parent_key',
+                'update': 'cascade',
+                'remove': 'cascade'
+                }]
 
     return GobTest
 
-def get_gob_schema():
-    class TestSchema(schema.Schema):
+def get_schema_class():
+    class SchemaTest(gobpersist.schema.Schema):
         gobtests = get_gob_class()
-    return TestSchema
+    return SchemaTest
 
 def get_memcached():
-    return memcached.MemcachedBackend(expiry=60,
-                                      serializer=gserialize.JSONSerializer())
+    return gobpersist.backends.memcached.MemcachedBackend(expiry=60)
+
+def get_session():
+    return gobpersist.session.Session(backend=get_memcached())
 
 class Initialization(unittest.TestCase):
     def test_gob_definition(self):
         gob_class = get_gob_class()
-        assert(issubclass(gob_class, gob.Gob))
+        assert(issubclass(gob_class, gobpersist.gob.Gob))
+        assert(gob_class.primary_key is gob_class.my_key)
+        assert(gob_class.class_key == 'gobtests')
+        assert(len(gob_class.obj_key) == 2
+               and gob_class.obj_key[0] == 'gobtests'
+               and gob_class.obj_key[1] is gob_class.my_key)
+        assert(gob_class.coll_key == ('gobtests',))
+        assert(gob_class.boolean_field.name == 'boolean_field')
+        assert(gob_class.datetime_field.name == 'datetime_field')
+        assert(gob_class.timestamp_field.name == 'timestamp_field')
+        assert(gob_class.string_field.name == 'string_field')
+        assert(gob_class.integer_field.name == 'integer_field')
+        assert(gob_class.incrementing_field.name == 'incrementing_field')
+        assert(gob_class.real_field.name == 'real_field')
+        assert(gob_class.enum_field.name == 'enum_field')
+        assert(gob_class.uuid_field.name == 'uuid_field')
+        assert(gob_class.list_field.name == 'list_field')
+        assert(gob_class.set_field.name == 'set_field')
+        assert(gob_class.my_key.name == 'my_key')
+        assert(gob_class.parent_key.name == 'parent_key')
+        assert(gob_class.parent.name == 'parent')
+        assert(gob_class.children.name == 'children')
+        assert(gob_class.boolean_field._name == 'boolean_field')
+        assert(gob_class.datetime_field._name == 'datetime_field')
+        assert(gob_class.timestamp_field._name == 'timestamp_field')
+        assert(gob_class.string_field._name == 'string_field')
+        assert(gob_class.integer_field._name == 'integer_field')
+        assert(gob_class.incrementing_field._name == 'incrementing_field')
+        assert(gob_class.real_field._name == 'real_field')
+        assert(gob_class.enum_field._name == 'enum_field')
+        assert(gob_class.uuid_field._name == 'uuid_field')
+        assert(gob_class.list_field._name == 'list_field')
+        assert(gob_class.set_field._name == 'set_field')
+        assert(gob_class.my_key._name == 'my_key')
+        assert(gob_class.parent_key._name == 'parent_key')
+        assert(gob_class.parent._name == 'parent')
+        assert(gob_class.children._name == 'children')
+        assert(gob_class.parent.foreign_class is gob_class)
+        assert(gob_class.children.foreign_class is gob_class)
+        assert(len(gob_class.consistency) == 1
+               and gob_class.consistency[0]['foreign_class'] is gob_class)
 
     def test_gob_reload(self):
         gob_class = get_gob_class()
-        gob_class.new_field = field.IntegerField()
+        gob_class.new_field = gobpersist.field.IntegerField()
         gob_class.reload_class()
+        assert(gob_class.new_field.name == 'new_field')
+        assert(gob_class.new_field._name == 'new_field')
 
     def test_schema_definition(self):
-        gob_schema = get_gob_schema()
+        sc_class = get_schema_class()
 
     def test_session_creation(self):
-        s = session.Session(backend=get_memcached())
+        s = get_session()
 
     def test_schema_creation(self):
-        sc = get_gob_schema()(session=session.Session(backend=get_memcached()))
+        sc_class = get_schema_class()
+        sc = sc_class(session=get_session())
+        assert(isinstance(sc.gobtests, gobpersist.schema.SchemaCollection))
+        assert(sc.gobtests.cls is sc_class.gobtests)
+        assert(sc.gobtests.session is sc.session)
+        assert(sc.gobtests.key == sc_class.gobtests.coll_key)
 
     def test_gob_creation(self):
-        sc_class = get_gob_schema()
-        sc = sc_class(session=session.Session(backend=get_memcached()))
-        gob = sc_class.gobtests(sc)
-        gob2 = sc_class.gobtests(sc)
+        gob_class = get_gob_class()
+        s = get_session()
+        gob = gob_class(session=s)
+        assert(gob.boolean_field is not gob_class.boolean_field)
+        assert(gob.datetime_field is not gob_class.datetime_field)
+        assert(gob.timestamp_field is not gob_class.timestamp_field)
+        assert(gob.string_field is not gob_class.string_field)
+        assert(gob.integer_field is not gob_class.integer_field)
+        assert(gob.incrementing_field is not gob_class.incrementing_field)
+        assert(gob.real_field is not gob_class.real_field)
+        assert(gob.enum_field is not gob_class.enum_field)
+        assert(gob.uuid_field is not gob_class.uuid_field)
+        assert(gob.list_field is not gob_class.list_field)
+        assert(gob.set_field is not gob_class.set_field)
+        assert(gob.my_key is not gob_class.my_key)
+        assert(gob.parent_key is not gob_class.parent_key)
+        assert(gob.parent is not gob_class.parent)
+        assert(gob.children is not gob_class.children)
+        assert(gob.boolean_field.instance == gob)
+        assert(gob.datetime_field.instance == gob)
+        assert(gob.timestamp_field.instance == gob)
+        assert(gob.string_field.instance == gob)
+        assert(gob.integer_field.instance == gob)
+        assert(gob.incrementing_field.instance == gob)
+        assert(gob.real_field.instance == gob)
+        assert(gob.enum_field.instance == gob)
+        assert(gob.uuid_field.instance == gob)
+        assert(gob.list_field.instance == gob)
+        assert(gob.set_field.instance == gob)
+        assert(gob.my_key.instance == gob)
+        assert(gob.parent_key.instance == gob)
+        assert(gob.parent.instance == gob)
+        assert(gob.children.instance == gob)
+        assert(gob.primary_key is gob.my_key)
+        assert(len(gob.obj_key) == 2
+               and gob.obj_key[0] == 'gobtests'
+               and gob.obj_key[1] is gob.my_key)
+        assert(len(gob.keys) == 1
+               and len(gob.keys[0]) == 3
+               and gob.keys[0][0] == 'gobtests'
+               and gob.keys[0][1] is gob.parent_key
+               and gob.keys[0][2] == 'children')
+        assert(len(gob.unique_keys) == 1
+               and len(gob.unique_keys[0]) == 2
+               and gob.unique_keys[0][0] == 'gobtests_by_timestamp'
+               and gob.unique_keys[0][1] is gob.timestamp_field)
+        assert(len(gob.consistency) == 1
+               and gob.consistency[0]['field'] is gob.my_key)
+        assert(len(gob.consistency[0]['foreign_obj']) == 3
+               and gob.consistency[0]['foreign_obj'][0] == 'gobtests'
+               and gob.consistency[0]['foreign_obj'][1] is gob.my_key
+               and gob.consistency[0]['foreign_obj'][2] is 'children')
 
 class TestWithSchema(unittest.TestCase):
     def setUp(self):
         super(TestWithSchema, self).setUp()
-        self.sc_class = get_gob_schema()
-        self.sc = self.sc_class(session=session.Session(backend=get_memcached()))
-
-#gobpersist/schema.py
-#gobpersist/gob.py
+        self.sc_class = get_schema_class()
+        self.sc = self.sc_class(session=get_session())
 
 class TestWithGob(TestWithSchema):
     gob_key = str(uuid.uuid4())
@@ -135,865 +241,1287 @@ class TestWithGob(TestWithSchema):
         self.gob = self.sc_class.gobtests(self.sc)
         self.gob.boolean_field.set(True)
         self.gob.datetime_field = datetime.datetime.utcnow()
-        self.gob.string_field = 'example_string'
-        self.gob.integer_field = 25
-        self.gob.real_field = 137542.5
+        self.gob.string_field = 'example string'
+        self.gob.integer_field = 2
+        self.gob.real_field = 3.1415
         self.gob.enum_field = 'test2'
+        self.gob.list_field = [1, 2, 3]
+        self.gob.set_field = set([1, 2, 3])
         self.gob.uuid_field = str(uuid.uuid4())
         self.gob.primary_key = self.gob_key
         self.gob.parent_key = None
         self.gob2 = self.sc_class.gobtests(self.sc)
         self.gob2.boolean_field.set(True)
         self.gob2.datetime_field = datetime.datetime.utcnow()
-        self.gob2.string_field = 'example_string'
-        self.gob2.integer_field = 30
-        self.gob2.real_field = 12345.5
-        self.gob2.enum_field= 'test2'
+        self.gob2.string_field = 'example string 2'
+        self.gob2.integer_field = 97
+        self.gob2.real_field = 1.618
+        self.gob2.enum_field = 'test2'
+        self.gob2.list_field = [1, 2, 3]
+        self.gob2.set_field = set([1, 2, 3])
         self.gob2.primary_key = self.gob2_key
+        self.gob2.parent_key = self.gob_key
 
+class TestGob(TestWithGob):
     def test_keyset(self):
         keys = self.gob.keyset()
-        print '\ntest_keyset '
-        print keys
-        print '\n'
+        assert(len(keys) == 2)
+        assert(('gobtests',) in keys)
+        assert(('gobtests', self.gob.parent_key, 'children') in keys)
 
-    def test_uniquekeyset(self):
+    def test_unique_keyset(self):
         unique_keys = self.gob.unique_keyset()
-        print '\ntest_uniquekeyset '
-        print unique_keys
-        print '\n'
+        assert(len(unique_keys) == 1)
+        assert(('gobtests_by_timestamp', self.gob.timestamp_field) in unique_keys)
+
+    def test_save(self):
+        self.gob.save()
+        self.sc.commit()
+        try:
+            gotten_gob = self.sc.gobtests.get(self.gob_key)
+            assert(gotten_gob.primary_key == self.gob.primary_key)
+        finally:
+            self.gob.remove()
+            self.sc.commit()
+
+    def test_remove(self):
+        self.gob.save()
+        self.sc.commit()
+        self.gob.remove()
+        self.sc.commit()
+        self.assertRaises(gobpersist.exception.NotFound,
+                          self.sc.gobtests.get, self.gob_key)
+
+    def test_revert(self):
+        self.gob.save()
+        self.sc.commit()
+        try:
+            assert(self.gob.string_field == 'example string')
+            self.gob.string_field = 'changed example string'
+            assert(self.gob.string_field == 'changed example string')
+            self.gob.revert()
+            assert(self.gob.string_field == 'example string')
+        finally:
+            self.gob.remove()
+            self.sc.commit()
+
+    def test_repr(self):
+        s = repr(self.gob)
+        assert(isinstance(s, (str, unicode)))
+
+    def test_str(self):
+        s = str(self.gob)
+        assert(isinstance(s, str))
+
+class TestSchemaCollection(TestWithGob):
+    def test_list(self):
+        self.gob.save()
+        self.gob2.save()
+        self.sc.commit()
+        try:
+            r = self.sc.gobtests.list()
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+            r = self.sc.gobtests.list(integer_field=2, string_field='example string')
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+            r = self.sc.gobtests.list(integer_field=('lt', 101))
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+            r = self.sc.gobtests.list(integer_field=('gt', 3))
+            assert(len(r) == 0)
+        finally:
+            self.gob.remove()
+            self.gob2.remove()
+            self.sc.commit()
 
     def test_get(self):
-        print '\nmaintest_get'
         self.gob.save()
+        self.gob2.save()
         self.sc.commit()
-        self.sc.gobtests.get(self.gob_key)
-        self.gob.remove()
+        try:
+            r = self.sc.gobtests.get(self.gob_key)
+            assert(r.primary_key == self.gob_key)
+            r = self.sc.gobtests.get(self.gob2_key)
+            assert(r.primary_key == self.gob2_key)
+        finally:
+            self.gob.remove()
+            self.gob2.remove()
+            self.sc.commit()
+        self.assertRaises(gobpersist.exception.NotFound,
+                          self.sc.gobtests.get, self.gob_key)
+        self.assertRaises(gobpersist.exception.NotFound,
+                          self.sc.gobtests.get, self.gob2_key)
+
+    def test_add(self):
+        self.sc.gobtests.add(self.gob)
         self.sc.commit()
-        print '\n'
-        
-    def test_list(self):
-        print '\nmaintest_list'
-        self.gob.save()
-        self.sc.commit()
-        self.sc.gobtests.list(name='gob')
-        self.sc.gobtests.list(integer_field=('eq', 25))
-        self.gob.remove()
-        self.sc.commit()
-        print '\n'
+        try:
+            r = self.sc.gobtests.get(self.gob_key)
+            assert(r.primary_key == self.gob_key)
+        finally:
+            self.gob.remove()
+            self.sc.commit()
 
     def test_update(self):
-        print '\nmaintest_update'
         self.gob.save()
         self.sc.commit()
-        self.gob.integer_field = 30
-        self.sc.update(self.gob)
+        try:
+            self.gob.string_field = 'changed example string'
+            self.sc.gobtests.update(self.gob)
+            self.sc.commit()
+            r = self.sc.gobtests.get(self.gob_key)
+            assert(r.string_field == 'changed example string'
+                   and not r.string_field.dirty)
+        finally:
+            self.gob.remove()
+            self.sc.commit()
+
+    def test_remove(self):
+        self.gob.save()
         self.sc.commit()
-        self.gob.remove()
+        self.sc.gobtests.remove(self.gob)
         self.sc.commit()
-        print '\n'
+        self.assertRaises(gobpersist.exception.NotFound,
+                          self.sc.gobtests.get, self.gob_key)
+
+    def test_repr(self):
+        s = repr(self.sc.gobtests)
+        assert(isinstance(s, (str, unicode)))
+
+    def test_str(self):
+        s = str(self.sc.gobtests)
+        assert(isinstance(s, str))
+
+class TestSchema(TestWithGob):
+    def test_collection_for_key(self):
+        self.gob2.save()
+        self.sc.commit()
+        try:
+            sc2 = self.sc.collection_for_key(self.sc_class.gobtests,
+                                             ('gobtests', self.gob_key, 'children'))
+            r = sc2.list()
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob2_key)
+        finally:
+            self.gob2.remove()
+            self.sc.commit()
+
+    def test_repr(self):
+        s = repr(self.sc)
+        assert(isinstance(s, (str, unicode)))
+
+    def test_str(self):
+        s = str(self.sc)
+        assert(isinstance(s, str))
+
+class TestSession(TestWithGob):
+    def test_add(self):
+        self.sc.session.add(self.gob)
+        self.sc.commit()
+        try:
+            r = self.sc.gobtests.get(self.gob_key)
+            assert(r.primary_key == self.gob_key)
+        finally:
+            self.gob.remove()
+            self.sc.commit()
+
+    def test_update(self):
+        self.gob.save();
+        self.sc.commit();
+        try:
+            self.gob.string_field = 'changed example string'
+            self.sc.session.update(self.gob)
+            self.sc.commit()
+            r = self.sc.gobtests.get(self.gob_key)
+            assert(r.string_field == 'changed example string'
+                   and not r.string_field.dirty)
+        finally:
+            self.gob.remove()
+            self.sc.commit()
+
+    def test_remove(self):
+        self.gob.save()
+        self.sc.commit()
+        self.sc.session.remove(self.gob)
+        self.sc.commit()
+        self.assertRaises(gobpersist.exception.NotFound,
+                          self.sc.gobtests.get, self.gob_key)
+
+    def add_collection(self):
+        self.sc.session.add_collection(('gobtests-notused',))
+        self.sc.commit()
+        try:
+            r = self.sc.query(self.sc_class.gobtests, ('gobtests-notused'))
+            assert(len(r) == 0)
+        finally:
+            self.sc.session.remove_collection(('gobtests-notused',))
+            self.sc.commit()
+
+    def remove_collection(self):
+        self.sc.session.add_collection(('gobtests-notused',))
+        self.sc.commit()
+        self.sc.session.remove_collection(('gobtests-notused',))
+        self.sc.commit()
+        self.assertRaises(gobpersist.exception.NotFound,
+                          self.sc.query,
+                          self.sc_class.gobtests,
+                          ('gobtests-notused'))
 
     def test_rollback(self):
         self.gob.save()
-        print'\nmaintest_rollback'
-        print self.sc.operations
-        self.gob.remove()
+        assert(self.gob in self.sc.operations['additions'])
+        self.sc.session.rollback()
+        assert(self.gob not in self.sc.operations['additions'])
+        self.gob.save()
+        self.sc.commit()
+        try:
+            self.gob.string_field = 'changed example string'
+            assert(self.gob.string_field == 'changed example string')
+            self.gob.save()
+            assert(self.gob in self.sc.operations['updates'])
+            self.sc.session.rollback(revert=True)
+            assert(self.gob not in self.sc.operations['updates'])
+            assert(self.gob.string_field == 'example string')
+        finally:
+            self.gob.remove()
+            self.sc.commit()
+
+    def test_start_transaction(self):
+        self.gob.save()
+        assert(self.gob in self.sc.operations['additions'])
+        assert(self.gob2 not in self.sc.operations['additions'])
+        self.sc.session.start_transaction()
+        self.gob2.save()
+        assert(self.gob not in self.sc.operations['additions'])
+        assert(self.gob2 in self.sc.operations['additions'])
         self.sc.rollback()
-        print self.sc.operations
-        print '\n'
-
-    def test_prepare_add(self):
-        self.gob.prepare_add()
-
-    def test_prepare_update(self):
-        print '\nmaintest_prepare_update'
-        self.gob.prepare_update()
-        print '\n'
-
-    def test_revert(self):
-        print '\nmaintest_revert'
-        print self.gob.revert()
-        print self.gob
-        print '\n'
-
-    def test_markpersisted(self):
-        print '\nmaintest_mark_persisted'
-        self.gob.mark_persisted()
-        print '\n'
-
-    def test__repr__(self):
-        print '\nsession.Session.__repr__'
-        print self.gob.__repr__()
-        print '\n'
-
-    
-
-#gobpersist/schema.py
-
-    def test_collection_for_a_key(self):
-        print '\nSchema.collection_for_a_key'
-        schema_coll_key = str(uuid.uuid4())
-        schema_coll = self.sc.collection_for_key(get_gob_class(), ('gobtests', schema_coll_key))
-        print schema_coll
-        print '\n'
-
-#gobpersist/session.py
-    
-    def test_gob_to_mygob(self):
-        print '\nsession.GobTranslator.gob_to_mygob'
-        print self.gob
-        print self.sc.gob_to_mygob(self.gob)
-        print '\n'
-
-    def test_query_to_myquery(self):
+        assert(self.gob in self.sc.operations['additions'])
+        assert(self.gob2 not in self.sc.operations['additions'])
+        self.sc.session.start_transaction()
         self.gob2.save()
         self.sc.commit()
-        print '\nsession.GobTranslator.query_to_myquery'
-        print self.sc.query_to_myquery(field.IntegerField(), {'eq':{'integer_field': 30, 'string_field': 'example_string'}} )
-        print '\n'
-        self.gob2.remove()
-        self.sc.commit()
+        assert(self.gob in self.sc.operations['additions'])
+        assert(self.gob2 in self.sc.operations['additions'])
+        self.sc.rollback()
+        assert(self.gob not in self.sc.operations['additions'])
+        assert(self.gob2 not in self.sc.operations['additions'])
 
-    def test_key_to_mykey(self):
-        uuid_str = str(uuid.uuid4())
-        new_key = ('gobtests', uuid_str)
-        print'\nsession.GobTranslator.key_to_mykey'
-        print self.sc.key_to_mykey(new_key)
-        print '\n'
-
-    def test_retrieve_to_myretrieve(self):
-        print '\nsession.GobTranslator.retrieve_to_myretrieve'
-        print self.sc.retrieve_to_myretrieve(self.gob,  ['integer_field'])
-        print self.sc.retrieve_to_myretrieve(self.gob, ['my_key'])
-        print '\n'
-
-    def test_query(self):
-        self.gob.save()
-        self.gob2.save()
-        self.sc.commit()
-        print '\nsession.GobTranslator.query'
-        print self.sc.query(self.sc_class.gobtests, key=('gobtests',  self.gob_key), query={'eq':{'string_field': 'example_string'}})
-        print '\n'
-        self.gob.remove()
-        self.gob2.remove()
-        self.sc.commit()
-
-#gobpersist/backends/memcached.py
-
-    def test_dokvmultiquery(self):
-        print '\nbackends.memcached.dokvmultiquery'
-        self.gob.save()
-        self.gob2.save()
-        self.sc.commit()
-        key_list = [('gobtests', self.gob_key), ('gobtests', self.gob2_key)]
-        self.sc.session.backend.do_kv_multi_query(self.sc_class.gobtests, key_list)
-        self.gob.remove()
-        self.gob2.remove()
-        self.sc.commit()
-        print '\n'
-        
-    def test_dokvquery(self):
-        print '\nbackends.memcached.dokvquery'
-        self.gob.save()
-        self.sc.commit()
-        key = ('gobtests', self.gob_key)
-        self.sc.session.backend.do_kv_query(self.sc_class.gobtests, key)
-        self.gob.remove()
-        self.sc.commit()
-        print '\n'
-
-    def test_kvquery(self):
-        self.gob.save()
-        self.sc.commit()
-        print '\nbackends.memcached.test_kvquery'
-        key = ('gobtests', self.gob_key)
-        self.sc.session.backend.kv_query(self.sc_class.gobtests, key=key)
-        print '\n'
-        self.gob.remove()
-        self.sc.commit()
-
-    def test_acquire_and_release_locks(self):
-        print '\nbackends.memcached.aquire_locks, release_locks'
-        locks = set()
-        locks.add('_lock' + '.' + '.'.join(self.gob_key))
-        self.sc.session.backend.acquire_locks(locks)
-        self.sc.session.backend.release_locks(locks)
-        print '\n'
-        
-    def test_keytomykey(self):
-        print '\nbackends.memcached.key_to_mykey'
-        key = ('gobtests', self.gob_key)
-        print key
-        gob_key = self.sc.session.backend.key_to_mykey(key)
-        print gob_key
-        print '\n'
-    
     def test_commit(self):
-        print '\nbackends.memcached.commit'
+        pass
+
+    def test_repr(self):
+        s = repr(self.sc.session)
+        assert(isinstance(s, (str, unicode)))
+
+    def test_str(self):
+        s = str(self.sc.session)
+        assert(isinstance(s, str))
+
+class TestQuery(TestWithGob):
+    def setUp(self):
+        super(TestQuery, self).setUp()
+        self.gob_cls = self.sc_class.gobtests
         self.gob.save()
+        self.gob2.save()
         self.sc.commit()
+
+    def tearDown(self):
         self.gob.remove()
+        self.gob2.remove()
         self.sc.commit()
-        print '\n\n'
 
-#gobpersist/backends/gobkvquerent.py
-    
-    def test_getvalue_gobkv(self):
-        new_sc_class = get_gob_schema()
-        new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
-        print'\ntest_getvalue_gobkv'
-        print new_sc.session.backend._get_value(self.gob, self.gob.integer_field)
-        print '\n'
+    def test_key_only(self):
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key))
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
 
-    def test_apply_operator_gobkv(self):
-        new_sc_class = get_gob_schema()
-        new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
-        print '\ntest_applyoperator_gobkv'
-        print new_sc.session.backend._apply_operator(self.gob, operator.eq, self.gob.integer_field, self.gob2.integer_field) 
-        print '\n'
-        
-    def test_executequery_gobkv(self):
-        new_sc_class = get_gob_schema()
-        new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
-        print '\ntest_executequery_gobkv'
-        print new_sc.session.backend._execute_query(self.gob,{'eq': {'integer_field': 30, 'integer_field': 25}} )
-        print '\n'
+    def test_key_range_only(self):
+        # nothing to test this with
+        pass
 
-    def test_query_gobkv(self):
-        new_sc_class = get_gob_schema()
-        new_sc = new_sc_class(session=session.Session(backend=gobkvquerent.GobKVQuerent()))
-        print '\ntest_query_gobkv'
-        self.assertRaises(AttributeError, new_sc.session.backend.query, new_sc.gobtests, query={'eq': 30})
-        print '\n'
+    def test_retrieve(self):
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          retrieve=['boolean_field', 'real_field'])
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        assert(r[0].boolean_field == True)
+        assert(r[0].real_field == 3.1415)
 
-class FieldGroup(object):
-    def __init__(self):
-        self.boolean_field = field.BooleanField()
-        self.datetime_field = field.DateTimeField()
-        self.string_field = field.StringField()
-        self.integer_field = field.IntegerField()
-        self.incrementing_field = field.IncrementingField()
-        self.real_field = field.RealField()
-        self.enum_field = field.EnumField(choices=('test1', 'test2'))
-        self.uuid_field = field.UUIDField()
+    def test_order(self):
+        r = self.sc.query(self.gob_cls,
+                          key=('gobtests', self.gob_key), order=[{'asc': 'boolean_field'},
+                                                   {'desc': 'real_field'}])
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
 
-class FieldWorkout(unittest.TestCase):    
+    def test_offset(self):
+        r = self.sc.query(self.gob_cls,
+                          key=('gobtests', self.gob_key), offset=0)
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls,
+                          key=('gobtests', self.gob_key), offset=1)
+        assert(len(r) == 0)
+
+    def test_limit(self):
+        r = self.sc.query(self.gob_cls,
+                          key=('gobtests', self.gob_key), limit=2)
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls,
+                          key=('gobtests', self.gob_key), limit=1)
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls,
+                          key=('gobtests', self.gob_key), limit=0)
+        assert(len(r) == 0)
+
+    def test_comparison(self):
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'eq': [('real_field',), 3.1415]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'eq': [('real_field',), 1.618]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'ne': [('real_field',), 1.618]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'ne': [('real_field',), 3.1415]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'gt': [('real_field',), 1.618]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'gt': [('real_field',), 3.1415]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'gt': [('real_field',), 6.2831]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'lt': [('real_field',), 6.2831]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'lt': [('real_field',), 3.1415]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'lt': [('real_field',), 1.618]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'ge': [('real_field',), 1.618]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'ge': [('real_field',), 3.1415]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'ge': [('real_field',), 6.2831]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'le': [('real_field',), 6.2831]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'le': [('real_field',), 3.1415]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'le': [('real_field',), 1.618]})
+        assert(len(r) == 0)
+
+    def test_boolean(self):
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'and': [
+                    {'eq': [('real_field',), 3.1415]},
+                    {'eq': [('integer_field',), 2]}]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'and': [
+                    {'eq': [('real_field',), 3.1415]},
+                    {'eq': [('integer_field',), 97]}]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'and': [
+                    {'eq': [('real_field',), 1.618]},
+                    {'eq': [('integer_field',), 97]}]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'or': [
+                    {'eq': [('real_field',), 3.1415]},
+                    {'eq': [('integer_field',), 2]}]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'or': [
+                    {'eq': [('real_field',), 3.1415]},
+                    {'eq': [('integer_field',), 97]}]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'or': [
+                    {'eq': [('real_field',), 1.618]},
+                    {'eq': [('integer_field',), 97]}]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'nor': [
+                    {'eq': [('real_field',), 3.1415]},
+                    {'eq': [('integer_field',), 2]}]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'nor': [
+                    {'eq': [('real_field',), 3.1415]},
+                    {'eq': [('integer_field',), 97]}]})
+        assert(len(r) == 0)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                          query={'nor': [
+                    {'eq': [('real_field',), 1.618]},
+                    {'eq': [('integer_field',), 97]}]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob_key)
+
+    def test_nested_scalar(self):
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob2_key),
+                          query={'eq': [('parent', 'real_field'), 3.1415]})
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob2_key)
+        r = self.sc.query(self.gob_cls, key=('gobtests', self.gob2_key),
+                          query={'eq': [('parent', 'real_field'), 1.618]})
+        assert(len(r) == 0)
+
+    def test_quantifiers(self):
+        gob3 = self.sc_class.gobtests(self.sc)
+        gob3.boolean_field.set(True)
+        gob3.datetime_field = datetime.datetime.utcnow()
+        gob3.string_field = 'example string 3'
+        gob3.integer_field = 97
+        gob3.real_field = 6.2831
+        gob3.enum_field = 'test2'
+        gob3.list_field = [1, 2, 3]
+        gob3.set_field = set([1, 2, 3])
+        gob3.uuid_field = str(uuid.uuid4())
+        gob3.primary_key = str(uuid.uuid4())
+        gob3.parent_key = self.gob_key
+        gob3.save()
+        self.sc.commit()
+        try:
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'any': ('children', 'real_field')},
+                        6.2831]})
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'any': ('children', 'integer_field')},
+                        97]})
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'any': ('children', 'real_field')},
+                        3.1415]})
+            assert(len(r) == 0)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'all': ('children', 'real_field')},
+                        6.2831]})
+            assert(len(r) == 0)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'all': ('children', 'integer_field')},
+                        97]})
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'all': ('children', 'real_field')},
+                        3.1415]})
+            assert(len(r) == 0)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'none': ('children', 'real_field')},
+                        6.2831]})
+            assert(len(r) == 0)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'none': ('children', 'integer_field')},
+                        97]})
+            assert(len(r) == 0)
+            r = self.sc.query(self.gob_cls, key=('gobtests', self.gob_key),
+                              query={'eq': [
+                        {'none': ('children', 'real_field')},
+                        3.1415]})
+            assert(len(r) == 1)
+            assert(r[0].primary_key == self.gob_key)
+        finally:
+            gob3.remove()
+            self.sc.commit()
+
+
+class TestStorage(TestWithGob):
+    # currently no supported storage engine with which to test...
+    pass
+
+class TestField(TestWithGob):
     def setUp(self):
-        self.tstfields = FieldGroup()
-    
-    def test_prepareadd(self):
-        self.tstfields.integer_field.has_value = False
-        self.tstfields.integer_field.default = 2312
+        super(TestField, self).setUp()
+        self.field = self.gob.boolean_field
+        self.test_v = True
+        self.test_less = False
 
-        self.tstfields.integer_field.value = 1234
-        self.tstfields.integer_field.prepare_add()
-
-        self.assertEqual(self.tstfields.integer_field.value, 2312)
-
-    def test_prepareupdate(self):
-        self.tstfields.integer_field.value = 1234
-        self.tstfields.integer_field.default_update = field.IntegerField.set(self.tstfields.integer_field, 12)
-        self.tstfields.integer_field.dirty = False
-
-        self.tstfields.integer_field.prepare_update()
-
-        self.assertEqual(self.tstfields.integer_field.value, 12)
-
-    def test_tripset(self):
-        self.tstfields.boolean_field = field.BooleanField()
-        self.tstfields.boolean_field.trip_set()
-
-        self.assertEqual(self.tstfields.boolean_field.dirty, True)
-        self.assertEqual(self.tstfields.boolean_field.has_value, True)
-
-    def test_resetstate(self):
-        self.tstfields.string_field.immutable = True
-        self.tstfields.string_field.dirty = True
-        self.tstfields.string_field.reset_state()
-
-        self.assertEqual(self.tstfields.string_field.immutable, False)
-        self.assertEqual(self.tstfields.string_field.dirty, False)
-        
-    def test_markpersisted(self):
-        field_value = 1234
-        self.tstfields.integer_field = field.IntegerField()
-        self.tstfields.integer_field.dirty = True
-        self.tstfields.integer_field.has_value = False
-        
-        self.tstfields.integer_field.mark_persisted()
-        self.assertEqual(self.tstfields.integer_field.has_persisted_value, False)
-        
-        self.tstfields.integer_field.set(field_value)
-        self.tstfields.integer_field.has_value = True
-
-        self.tstfields.integer_field.mark_persisted()
-
-        self.assertEqual(self.tstfields.integer_field.has_persisted_value, True)
-        self.assertEqual(self.tstfields.integer_field.persisted_value, field_value)
-
-    def test_revert(self):
-        field_value = 1234
-        self.tstfields.integer_field.persisted_value = field_value
-        self.tstfields.integer_field.set(4567)
-        self.tstfields.integer_field.has_persisted_value = True
-        self.tstfields.dirty = True
-
-        self.tstfields.integer_field.revert()
-
-        self.assertEqual(self.tstfields.integer_field.has_value, True)
-        self.assertEqual(self.tstfields.integer_field.value, field_value)
-        self.assertEqual(self.tstfields.integer_field.dirty, False)
-    
-    def test_sets(self):
-        self.tstfields.integer_field.set(1234)
-        self.assertEqual(self.tstfields.integer_field.value, 1234)
-
-        self.tstfields.string_field.set('outta')
-        self.assertEqual(self.tstfields.string_field.value, 'outta')
-        
-    def test_validate(self):
-        self.assertRaises(ValueError, self.tstfields.boolean_field.validate, None)
+    def test_set(self):
+        old_value = self.field.value
+        self.field.set(self.test_v)
+        assert(self.field == self.test_v)
+        assert(self.field.dirty)
+        assert(self.field.has_value)
 
     def test_clone(self):
-        self.tstfields.string_field.set("outta control string")
-        new_field = field.Field.clone(self.tstfields.string_field)
-        self.assertEqual(self.tstfields.string_field, new_field)
+        new_field = self.field.clone()
+        assert(new_field is not self.field)
+        assert(new_field == self.field)
+        assert(new_field.instance is self.field.instance)
+        new_field = self.field.clone(clean_break = True)
+        assert(new_field is not self.field)
+        assert(new_field == self.field)
+        assert(new_field.instance is None)
 
-        self.tstfields.integer_field.set(1234)
-        new_field = field.Field.clone(self.tstfields.integer_field)
-        self.assertEqual(self.tstfields.integer_field, new_field) 
+    def test_repr(self):
+        s = repr(self.field)
+        assert(isinstance(s, (str, unicode)))
 
-    def test_set__(self):
-        self.tstfields.integer_field.instance_key = 'integer_field'
-        self.tstfields.integer_field.set(1234)
-        self.tstfields.integer_field.__set__(self.tstfields, 5678)
+    def test_str(self):
+        s = str(self.field)
+        assert(isinstance(s, str))
 
-    def test_get__(self):
-        self.tstfields.integer_field.instance_key = 'value'
-        self.tstfields.integer_field.set(5678)
-        self.tstfields.integer_field.__get__(self.tstfields.integer_field, self.tstfields)
+    def test_comparison(self):
+        self.field.set(self.test_v)
+        assert(self.field > self.test_less)
+        assert(self.field >= self.test_less)
+        assert(not self.field < self.test_less)
+        assert(not self.field <= self.test_less)
+        assert(not self.field == self.test_less)
+        assert(self.field != self.test_less)
+        assert(cmp(self.field, self.test_less) > 0)
 
-    def test_delete__(self):
-        inst_key = str(uuid.uuid4())
-        self.tstfields.integer_field.instance = field.IntegerField()
-        self.tstfields.integer_field.instance.null = True
-        self.tstfields.integer_field.instance_key = 'instance'
-        self.tstfields.integer_field.__delete__(self.tstfields.integer_field)
-
-class BooleanFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.boolean_field = field.BooleanField()
-
-    def test_validate(self):
-        self.assertRaises(TypeError, self.boolean_field.validate, 1234)
-
-class DateTimeFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.datetime_field = field.DateTimeField()
-    
-    def test_set(self):
-        datetime_value = "2007-06-20T12:34:40Z"
-        self.datetime_field._set(datetime_value)
-        self.assertEqual(self.datetime_field.value, iso8601.parse_datetime(datetime_value))
-
-    def test_validate(self):
-        self.assertRaises(TypeError, self.datetime_field.validate, True)
-        self.assertRaises(ValueError, self.datetime_field.validate, " 'ello suh ")
-        
-        self.datetime_field.validate("2007-06-20T12:34:40Z")
-
-class TimestampFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.timestamp_field = field.TimestampField()
-
-    def test_field(self):
-        compare_date = datetime.datetime(2007, 4, 3)
-        self.assertEqual(type(self.timestamp_field.default()), type(compare_date))
-        
-class StringFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.string_field = field.StringField()
-
-    def test_set(self):
-        self.string_field.value = 'this'
-        self.value_encoded = 'somethin'
-        self.value_decoded = 'sorta'
-        self.string_field._set(None)
-
-        self.assertEqual(self.string_field.value, None)
-        self.assertEqual(self.string_field.value_encoded, None)
-        self.assertEqual(self.string_field.value_decoded, None)
-
-        self.string_field._set(unicode('stuff'))
-        self.assertEqual(self.string_field.value, unicode('stuff'))
-        self.assertEqual(self.string_field.value_decoded, self.string_field.value)
-        self.assertEqual(self.string_field.value_encoded, unicode('stuff').encode('utf-8'))
-
-        self.string_field._set('stuff')
-        self.assertEqual(self.string_field.value, 'stuff')
-        self.assertEqual(self.string_field.value_encoded, 'stuff')
-        self.assertEqual(self.string_field.value_decoded, None)
-
-        self.string_field.encoding = 'utf-8'
-
-        self.string_field._set(unicode('stuff'))
-        self.assertEqual(self.string_field.value, unicode('stuff'))
-        self.assertEqual(self.string_field.value_decoded, self.string_field.value)
-        self.assertEqual(self.string_field.value_encoded, unicode('stuff').encode('utf-8'))
-
-        self.string_field._set('stuff')
-        self.assertEqual(self.string_field.value, 'stuff')
-        self.assertEqual(self.string_field.value_encoded, 'stuff')
-        self.assertEqual(self.string_field.value_decoded, 'stuff'.decode('utf-8'))
-
-    def test_validate(self):
-        self.assertRaises(ValueError, self.string_field.validate, None)
-        self.assertRaises(TypeError, self.string_field.validate, 1234)
-        
-        self.string_field.max_length = 5
-        self.string_field.allow_empty = False
-        self.assertRaises(ValueError, self.string_field.validate, 'sixtyone')
-        self.assertRaises(ValueError, self.string_field.validate, '')
-        
-    def test_unicode__(self):
-        self.value_decoded = None
-        self.string_field.set('unicode string')
-        self.string_field.__unicode__()
-        
-class IntegerFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.integer_field = field.IntegerField()
-    
-    def test_init(self):
-        precision_list = [8, 16, 32, 64]
-        
-        for count in precision_list:
-            field.IntegerField(precision=count)
-        
-        self.assertRaises(ValueError, field.IntegerField, precision=65)
-
-    def test_validate(self):
-        self.assertRaises(TypeError, self.integer_field.validate, uuid.uuid4() )
-        self.assertRaises(TypeError, self.integer_field.validate, 'sixteen')
-
-        self.integer_field = field.IntegerField()
-        self.integer_field.maximum = 6
-        self.integer_field.minimum = 3
-        
-        self.assertRaises(ValueError, self.integer_field.validate, 7)
-        self.assertRaises(ValueError, self.integer_field.validate, 2)
-
-class IncrementingFieldWorkout(unittest.TestCase):
-    "Come back to this one, please."
-    def setUp(self):
-        self.inc_field = field.IncrementingField()
-
-    def test_incrementing(self):
-        it_list = [0, 0, 0, 0]
-        self.inc_field.set(1)
-
-class RealFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.real_field = field.RealField()
-
-    def test_init(self):
-        it_list = ['half', 'single', 'double', 'quad']
-        
-        for count in it_list:
-            self.real_field = field.RealField(precision = count)
-            self.assertEqual(self.real_field.precision, count)
-
-    def test_validate(self):
-        self.assertRaises(TypeError, self.real_field.set, 1234)
-        self.assertRaises(TypeError, self.real_field.set, False)
-    
-class EnumFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.enum_field = field.EnumField('case1', 'case2')
-        
-    def test_validate(self):
-        self.enum_field.validate('case1')
-        self.assertRaises(ValueError, self.enum_field.validate, 'someshit')
-
-class UUIDFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.uuid_field = field.UUIDField()
-
-    def test_init(self):
-        self.assertEqual(self.uuid_field.encoding, 'us-ascii')
-
-    def test_validate(self):
-        test_uuid =str(uuid.uuid4())
-        self.uuid_field.set(test_uuid)
-        self.assertRaises(ValueError, self.uuid_field.set, 'randomstring')
-
-class MultiFieldWorkout(unittest.TestCase):
-
-    def setUp(self):
-        self.multi_field = field.MultiField(field.IntegerField())
-        self.field_list = [self.multi_field._element_to_field(0),
-        self.multi_field._element_to_field(1),
-        self.multi_field._element_to_field(2),
-        self.multi_field._element_to_field(3)]
-
-
-    def test_elementtofield(self):
-        self.new_field = self.multi_field._element_to_field(4)
-        self.assertEqual(self.new_field.value, 4)
-
-        self.multi_field = field.MultiField(field.StringField())
-        self.new_field = self.multi_field._element_to_field('viscous')
-        self.assertEqual(self.new_field.value, 'viscous')
-
-    def test_resetstate(self):
-        self.multi_field.set(self.field_list)
-        self.multi_field.reset_state()
-        
-        self.assertEqual(self.multi_field.value[0].immutable, False)
-        self.assertEqual(self.multi_field.value[0].dirty, False)
-        self.assertEqual(self.multi_field.value[1].immutable, False)
-        self.assertEqual(self.multi_field.value[1].dirty, False)
-
-class ListFieldWorkout(unittest.TestCase):
-    def setUp(self):
-        self.list_field = field.ListField(field.IntegerField())
-        self.int_list = [0, 1, 2, 3, 4]
-
-    def test_clone(self):
-        self.list_field.set(self.int_list)
-        new_field = self.list_field.clone()
-        self.assertEqual(new_field.value, self.int_list)
-
-        str_list = ['zero', 'one', 'two', 'three', 'four']
-        self.list_field = field.ListField(field.StringField())
-        self.list_field.set(str_list)
-        new_field = self.list_field.clone()
-        self.assertEqual(new_field.value, str_list)
-
-    def test_set(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.int_list, self.list_field.value)
-        
-    def test_setitem(self):
-        self.list_field.set(self.int_list)
-        self.list_field.__setitem__(0, 1)
-        self.assertEqual(self.list_field.value[0], self.int_list[1])
-        self.list_field.__setitem__(2, 1)
-        self.assertEqual(self.list_field.value[2], self.int_list[1])
-
-    def test_delitem(self):
-        self.list_field.set(self.int_list)
-        self.list_field.__delitem__(0)
-        self.assertEqual(self.list_field.value[0], self.int_list[1])        
-
-    def test_iadd(self):
-        int_list2 = [0, 1, 2, 3, 4]
-        self.list_field.set(self.int_list)
-        self.list_field.__iadd__(int_list2)
-
-    def test_imul(self):
-        self.list_field.value = self.int_list
-        self.list_field.__imul__(3)
-
-    def test_reverse(self):
-        self.list_field.set(self.int_list)
-        self.list_field.reverse()
-        self.assertEqual(self.list_field.value, [4, 3, 2, 1, 0])
-
-    def test_sort(self):
-        int_field = [5, 3, 9, 4, 1, 3 , 0, 2, 2, 5, 3]
-        self.list_field.set(int_field)
-        self.list_field.sort()
-
-        self.assertEqual(self.list_field.value, [0, 1, 2, 2, 3, 3, 3, 4, 5, 5, 9])
-
-    def test_extend(self):
-        int_list2 = [5, 6, 7, 8]
-        self.list_field.set(self.int_list)
-        self.list_field.extend(int_list2)
-        self.assertEqual(self.list_field.value, [0, 1, 2, 3, 4, 5, 6, 7, 8])
-
-    def test_insert(self):
-        self.list_field.set(self.int_list)
-        self.list_field.insert(3, 4)
-        self.assertEqual(self.list_field.value[3], 4)
-    
-    def test_pop(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.list_field.pop(), 4)
-
-    def test_remove(self):
-        self.list_field.set(self.int_list)
-        self.list_field.remove(2)
-        self.assertEqual(self.list_field.value, [0, 1, 3, 4])
-
-    def test_append(self):
-        self.list_field.set(self.int_list)
-        self.list_field.append(9)
-        self.assertEqual(self.list_field.value, [0, 1, 2, 3, 4, 9])
-    
     def test_hash(self):
-        self.list_field.set(self.int_list)
-        temp_list = field.ListField(field.IntegerField())
-        temp_list.set(self.int_list)
-        self.assertEqual(type(self.list_field.__hash__), type(temp_list.__hash__))
+        h = hash(self.field)
+        assert(isinstance(h, int))
+        self.assertRaises(AssertionError, self.field.set, self.test_v)
+
+    def test_nonzero(self):
+        assert(self.field or not self.field)
+
+    def test_null(self):
+        self.assertRaises(ValueError, self.field.set, None)
+
+class TestBooleanField(TestField):
+    def setUp(self):
+        super(TestBooleanField, self).setUp()
+        self.field = self.gob.boolean_field
+        self.test_v = True
+        self.test_less = False
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 5)
+        self.field.set(True)
+
+class TestDateTimeField(TestField):
+    def setUp(self):
+        super(TestDateTimeField, self).setUp()
+        self.field = self.gob.datetime_field
+        self.test_v = datetime.datetime.utcnow()
+        self.test_less = self.test_v - datetime.timedelta(days=1)
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 5)
+        self.field.set(datetime.datetime.utcnow())
+        self.field.set('1054-07-04T00:00:00')
+
+class TestTimestampField(TestDateTimeField):
+    def setUp(self):
+        super(TestTimestampField, self).setUp()
+        self.field = self.gob.timestamp_field
+        self.test_v = datetime.datetime.utcnow()
+        self.test_less = self.test_v - datetime.timedelta(days=1)
+
+class TestStringField(TestField):
+    def setUp(self):
+        super(TestStringField, self).setUp()
+        self.field = self.gob.string_field
+        self.test_v = 'example string'
+        self.test_less = 'example strin'
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 5)
+        self.field.set('abc')
+        self.field.set(unicode('abc'))
+
+    def test_unicode(self):
+        u = unicode(self.field)
+        assert(isinstance(u, unicode))
+
+    def test_decode(self):
+        u = self.field.decode()
+        assert(isinstance(u, unicode))
+
+    def test_encode(self):
+        s = self.field.encode()
+        assert(isinstance(s, str))
+        s = self.field.encode(encoding='UTF-16')
+        assert(isinstance(s, str))
+
+    def test_len(self):
+        self.field.set(self.test_v)
+        assert(len(self.field) == len(self.test_v))
 
     def test_getitem(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.list_field.__getitem__(3), 3)
+        self.field.set(self.test_v)
+        assert(self.field[1] == self.test_v[1])
 
-    def test_add(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.list_field.__add__([5, 6, 7]), [0, 1, 2, 3, 4, 5, 6, 7])
-
-    def test_radd(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.list_field.__radd__([5, 6, 7]), [5, 6, 7, 0, 1, 2, 3, 4])
-
-    def test_mul(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.list_field.__mul__(2), [0, 1, 2, 3, 4, 0, 1, 2, 3, 4])
-
-    def test_rmul(self):
-        self.list_field.set(self.int_list)
-        self.assertEqual(self.list_field.__rmul__(2), [0, 1, 2, 3, 4, 0, 1, 2, 3, 4])
+    def test_iter(self):
+        self.field.set(self.test_v)
+        i = 0
+        for c in self.field:
+            assert(c == self.field[i])
+            i += 1
 
     def test_reversed(self):
-        self.list_field.set(self.int_list)
-        reversed_list = []
-        iterator_obj = self.list_field.__reversed__()
-        for i in iterator_obj:
-            reversed_list.append(i)
-        self.assertEqual(reversed_list, list(reversed(self.list_field.value)))
+        self.field.set(self.test_v)
+        i = len(self.test_v) - 1
+        for c in reversed(self.field):
+            assert(c == self.field[i])
+            i -= 1
 
-class ForeignWorkout(unittest.TestCase):
-    def setUp(self):
-        self.forin_class = FieldGroup()
-        self.new_field = field.Foreign(self.forin_class, self.forin_class.integer_field, self.forin_class.boolean_field )
-        
-    def test_markpersisted(self):
-        self.new_field.mark_persisted()
-    
-    def test_revert(self):
-        self.new_field.revert()
-
-    def test_forget(self):
-        self.new_field.forget()
-
-    def test_prepare_add(self):
-        self.new_field.prepare_add()
-
-    def test_prepare_update(self):
-        self.new_field.prepare_update()
-
-    def test_setattribute(self):
-        self.new_field.__setattribute__('value', 1234)
-        self.assertEqual(self.new_field._value, 1234)
-
-    def test_fetchvalue(self):
-        self.new_field.fetch_value()
-
-def init_memcached():
-    return memcached.MemcachedBackend(expiry=60, serializer=gserialize.JSONSerializer())
-
-class SizeFileWorkout(unittest.TestCase):
-    def get_sizestore(self):   
-
-        class SizableStorable(storage.Storable):
-            size = 180
-        return SizableStorable
-
-    def setUp(self):
-        self.new_file = self.get_sizestore()
-    
-    def test_read(self):
-        disk_file = open('sample.txt', 'r')
-        file_like = storage.LimitedFile(self.new_file, disk_file)
-        file_like.read(4)
-
-class LimitedFileWorkout(unittest.TestCase):
-    def get_sizestore(self):   
-
-        class SizableStorable(storage.Storable):
-            size = 180
-        return SizableStorable
-
-    def setUp(self):
-        self.new_file = self.get_sizestore()
-
-    def test_read(self):
-        disk_file = open('sample.txt', 'r')
-        file_like = storage.SizeFile(self.new_file, disk_file)
-        file_like.read(5)
-
-class StorableWorkout(unittest.TestCase):
-    def get_storable(self, session):
-        class NewMD5Storable(storage.MD5Storable):
-            session = None
-            size = 18
-            def __init__(self, instance):
-                self.session = instance
-            
-        return NewMD5Storable(session)
-
-    def setUp(self):
-        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
-
-        self.fp = open('sample.txt', 'r')
-        self.new_file = self.get_storable(self.new_session)
-
-    def test_read(self):
-        file_like = storage.SizeFile(self.new_file, self.fp)
-        file_like.read(5)
-
-    def test_fileops(self):
-        self.assertRaises(NotImplementedError, self.new_file.upload, self.fp)
-        self.assertRaises(NotImplementedError, self.new_file.upload_iter, self.fp)
-
-class MD5StorableWorkout(unittest.TestCase):
-    
-    def get_storable(self, session):
-        class NewMD5Storable(storage.MD5Storable):
-            session = None
-            def __init__(self, instance):
-                self.session = instance
-            
-        return NewMD5Storable(session)
-
-    def setUp(self):
-        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
-
-        self.fp = open('sample.txt', 'r')
-        self.md5_storable = self.get_storable(self.new_session)
-
-    def test_upload(self):
-        self.assertRaises(NotImplementedError, self.md5_storable.upload, self.fp)
-
-    def test_uploaditer(self):
-        self.assertRaises(NotImplementedError, self.md5_storable.upload_iter, self.fp)
-
-    def test_download(self):
-        self.assertRaises(NotImplementedError, self.md5_storable.download)
-
-class SessionWorkout(unittest.TestCase):
-    def get_gob(self):    
-        class GobTest(gob.Gob):
-            boolean_field = field.BooleanField()
-            string_field = field.StringField()
-            integer_field = field.IntegerField()
-            timestamp_field = field.TimestampField(unique=True)
-    
-            boolean_field.set(True)
-            string_field.set("outtacontrol")
-            integer_field.set(1234)
-
-        return GobTest()
-
-    def setUp(self):
-        self.new_gob = self.get_gob()
-        self.gob_testkey = str(uuid.uuid4())
-        self.new_gob.primary_key = self.gob_testkey
-        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
-         
-    def test_registergob(self):
-        self.new_session.register_gob(self.new_gob)
-        self.assertEqual(self.new_session.collections[self.new_gob.class_key][self.new_gob.primary_key], self.new_gob)
+    def test_contains(self):
+        self.field.set(self.test_v)
+        assert(self.test_v[1] in self.field)
 
     def test_add(self):
-        self.new_session.add(self.new_gob)
-        popped_gob = self.new_session.operations['additions'].pop()
-        self.assertEqual(popped_gob.primary_key, self.gob_testkey)
-         
-    def test_update(self):
-        self.new_session.update(self.new_gob)
-        popped_gob = self.new_session.operations['updates'].pop()
-        self.assertEqual(popped_gob.primary_key, self.gob_testkey)
+        self.field.set(self.test_v)
+        assert(self.field + self.test_less == self.test_v + self.test_less)
+
+    def test_radd(self):
+        self.field.set(self.test_v)
+        assert(self.test_less + self.field == self.test_less + self.test_v)
+
+    def test_iadd(self):
+        self.field.set(self.test_v)
+        self.field += self.test_less
+        assert(self.field == self.test_v + self.test_less)
+
+    def test_mul(self):
+        self.field.set(self.test_v)
+        assert(self.field * 3 == self.test_v * 3)
+
+    def test_rmul(self):
+        self.field.set(self.test_v)
+        assert(3 * self.field == 3 * self.test_v)
+
+    def test_imul(self):
+        self.field.set(self.test_v)
+        self.field *= 3
+        assert(self.field == self.test_v * 3)
+
+# doesn't inherit from unit tests, since this shouldn't get run by itself...
+class TestNumericField(object):
+    def setUp(self):
+        pass
+    def test_add(self):
+        self.field.set(self.test_v)
+        assert(self.field + self.test_less == self.test_v + self.test_less)
+    def test_sub(self):
+        self.field.set(self.test_v)
+        assert(self.field - self.test_less == self.test_v - self.test_less)
+    def test_mul(self):
+        self.field.set(self.test_v)
+        assert(self.field * self.test_less == self.test_v * self.test_less)
+    def test_div(self):
+        self.field.set(self.test_v)
+        assert(self.field / self.test_less == self.test_v / self.test_less)
+    def test_truediv(self):
+        self.field.set(self.test_v)
+        assert(self.field / self.test_less == self.test_v / self.test_less)
+    def test_floordiv(self):
+        self.field.set(self.test_v)
+        assert(self.field // self.test_less == self.test_v // self.test_less)
+    def test_mod(self):
+        self.field.set(self.test_v)
+        assert(self.field % self.test_less == self.test_v % self.test_less)
+    def test_divmod(self):
+        self.field.set(self.test_v)
+        assert(divmod(self.field, self.test_less)
+               == divmod(self.test_v, self.test_less))
+    def test_pow(self):
+        self.field.set(self.test_v)
+        assert(self.field**self.test_less == self.test_v**self.test_less)
+
+    def test_radd(self):
+        self.field.set(self.test_v)
+        assert(self.test_less + self.field == self.test_less + self.test_v)
+    def test_rsub(self):
+        self.field.set(self.test_v)
+        assert(self.test_less - self.field == self.test_less - self.test_v)
+    def test_rmul(self):
+        self.field.set(self.test_v)
+        assert(self.test_less * self.field == self.test_less * self.test_v)
+    def test_rdiv(self):
+        self.field.set(self.test_v)
+        assert(self.test_less / self.field == self.test_less / self.test_v)
+    def test_rtruediv(self):
+        self.field.set(self.test_v)
+        assert(self.test_less / self.field == self.test_less / self.test_v)
+    def test_rfloordiv(self):
+        self.field.set(self.test_v)
+        assert(self.test_less // self.field == self.test_less // self.test_v)
+    def test_rmod(self):
+        self.field.set(self.test_v)
+        assert(self.test_less % self.field == self.test_less % self.test_v)
+    def test_rdivmod(self):
+        self.field.set(self.test_v)
+        assert(divmod(self.test_less, self.field)
+               == divmod(self.test_less, self.test_v))
+    def test_rpow(self):
+        self.field.set(self.test_v)
+        assert(self.test_less**self.field == self.test_less**self.test_v)
+
+    def test_iadd(self):
+        self.field.set(self.test_v)
+        self.field += self.test_less
+        assert(self.field == self.test_v + self.test_less)
+    def test_isub(self):
+        self.field.set(self.test_v)
+        self.field -= self.test_less
+        assert(self.field == self.test_v - self.test_less)
+    def test_imul(self):
+        self.field.set(self.test_v)
+        self.field *= self.test_less
+        assert(self.field == self.test_v * self.test_less)
+    def test_idiv(self):
+        self.field.set(self.test_v)
+        self.field /= self.test_less
+        assert(self.field == self.test_v / self.test_less)
+    def test_itruediv(self):
+        self.field.set(self.test_v)
+        self.field /= self.test_less
+        assert(self.field == self.test_v / self.test_less)
+    def test_ifloordiv(self):
+        self.field.set(self.test_v)
+        self.field //= self.test_less
+        assert(self.field == self.test_v // self.test_less)
+    def test_mod(self):
+        self.field.set(self.test_v)
+        self.field %= self.test_less
+        assert(self.field == self.test_v % self.test_less)
+    def test_ipow(self):
+        self.field.set(self.test_v)
+        self.field **= self.test_less
+        assert(self.field == self.test_v**self.test_less)
+
+    def test_neg(self):
+        self.field.set(self.test_v)
+        assert(-self.field == -self.test_v)
+    def test_pos(self):
+        self.field.set(self.test_v)
+        assert(+self.field == +self.test_v)
+    def test_abs(self):
+        self.field.set(-self.test_v)
+        assert(abs(self.field) == abs(-self.test_v))
+    def test_complex(self):
+        self.field.set(-self.test_v)
+        assert(complex(self.field) == complex(-self.test_v))
+    def test_int(self):
+        self.field.set(-self.test_v)
+        assert(int(self.field) == int(-self.test_v))
+    def test_long(self):
+        self.field.set(-self.test_v)
+        assert(long(self.field) == long(-self.test_v))
+    def test_float(self):
+        self.field.set(-self.test_v)
+        assert(float(self.field) == float(-self.test_v))
+    def test_coerce(self):
+        self.field.set(self.test_v)
+        r = coerce(self.field, 5)
+        assert(type(r[0]) == type(r[1])
+               or isinstance(r[0], type(r[1]))
+               or isinstance(r[1], type(r[0])))
+        r = coerce(self.field, 5.0)
+        assert(type(r[0]) == type(r[1])
+               or isinstance(r[0], type(r[1]))
+               or isinstance(r[1], type(r[0])))
+
+class TestIntegerField(TestField, TestNumericField):
+    def setUp(self):
+        super(TestIntegerField, self).setUp()
+        self.field = self.gob.integer_field
+        self.test_v = 5
+        self.test_less = 2
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, '5')
+        self.assertRaises(ValueError, self.field.set, self.field.maximum + 1)
+        self.field = 5
+
+    def test_lshift(self):
+        self.field.set(123)
+        assert(self.field << 3 == 123 << 3)
+    def test_rshift(self):
+        self.field.set(123)
+        assert(self.field >> 3 == 123 >> 3)
+    def test_and(self):
+        self.field.set(123)
+        assert(self.field & 321 == 123 & 321)
+    def test_xor(self):
+        self.field.set(123)
+        assert(self.field ^ 321 == 123 ^ 321)
+    def test_or(self):
+        self.field.set(123)
+        assert(self.field | 321 == 123 | 321)
+
+    def test_rlshift(self):
+        self.field.set(3)
+        assert(123 << self.field == 123 << 3)
+    def test_rrshift(self):
+        self.field.set(3)
+        assert(123 >> self.field == 123 >> 3)
+    def test_rand(self):
+        self.field.set(123)
+        assert(321 & self.field == 321 & 123)
+    def test_rxor(self):
+        self.field.set(123)
+        assert(321 ^ self.field == 321 ^ 123)
+    def test_ror(self):
+        self.field.set(123)
+        assert(321 | self.field == 321 | 123)
+
+    def test_ilshift(self):
+        self.field.set(123)
+        self.field <<= 3
+        assert(self.field == 123 << 3)
+    def test_irshift(self):
+        self.field.set(123)
+        self.field >>= 3
+        assert(self.field == 123 >> 3)
+    def test_iand(self):
+        self.field.set(123)
+        self.field &= 321
+        assert(self.field == 123 & 321)
+    def test_ixor(self):
+        self.field.set(123)
+        self.field ^= 321
+        assert(self.field == 123 ^ 321)
+    def test_ior(self):
+        self.field.set(123)
+        self.field |= 321
+        assert(self.field == 123 | 321)
+
+    def test_invert(self):
+        self.field.set(123)
+        assert(~self.field == ~123)
+    def test_oct(self):
+        self.field.set(123)
+        assert(oct(self.field) == '0173')
+    def test_hex(self):
+        self.field.set(123)
+        assert(hex(self.field) == '0x7b')
+
+class TestIncrementingField(TestIntegerField):
+    def setUp(self):
+        super(TestIncrementingField, self).setUp()
+        self.field = self.gob.incrementing_field
+        self.test_v = 5
+        self.test_less = 2
+
+class TestRealField(TestField, TestNumericField):
+    def setUp(self):
+        super(TestRealField, self).setUp()
+        self.field = self.gob.real_field
+        self.test_v = 3.1416
+        self.test_less = 1.618
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 'abc')
+        self.field.set(1.618)
+
+class TestEnumField(TestStringField):
+    def setUp(self):
+        super(TestEnumField, self).setUp()
+        self.field = self.gob.enum_field
+        self.test_v = 'test2'
+        self.test_less = 'test1'
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 234)
+        self.assertRaises(ValueError, self.field.set, 'abc')
+        self.field.set('test2')
+
+    def test_imul(self):
+        pass
+    def test_iadd(self):
+        pass
+    def test_encode(self):
+        pass
+    def test_decode(self):
+        pass
+
+class TestUUIDField(TestStringField):
+    def setUp(self):
+        super(TestUUIDField, self).setUp()
+        self.field = self.gob.uuid_field
+        self.test_v = '2ef6eaf0-d2d0-11e1-9b23-0800200c9a66'
+        self.test_less = '1da2e1f0-d2d0-11e1-9b23-0800200c9a66'
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 234)
+        self.assertRaises(ValueError, self.field.set, 'abc')
+        self.field.set('2ef6eaf0-d2d0-11e1-9b23-0800200c9a66')
+
+    def test_imul(self):
+        pass
+    def test_iadd(self):
+        pass
+    def test_encode(self):
+        pass
+    def test_decode(self):
+        pass
+
+class TestMultiField(object):
+    def setUp(self):
+        pass
+
+    def test_iter(self):
+        tv_copy = list(self.test_v)
+        self.field.set(self.test_v)
+        for x in self.field:
+            assert(x in tv_copy)
+            tv_copy.remove(x)
+        assert(len(tv_copy) == 0)
+
+    def test_len(self):
+        self.field.set(self.test_v)
+        assert(len(self.field) == len(self.test_v))
+
+    def test_contains(self):
+        tv_copy = list(self.test_v)
+        self.field.set(self.test_v)
+        assert(tv_copy[0] in self.field)
+
+class TestListField(TestField, TestMultiField):
+    def setUp(self):
+        super(TestListField, self).setUp()
+        self.field = self.gob.list_field
+        self.test_v = [3, 7]
+        self.test_less = [2, 6]
+
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 234)
+        self.assertRaises(TypeError, self.field.set, ['abc'])
+        self.field.set([3, 7])
+
+    def test_setitem(self):
+        self.field.set([3, 7])
+        self.field[0] = 2
+        assert(self.field == [2, 7])
+
+    def test_delitem(self):
+        self.field.set([3, 5, 7])
+        del self.field[1]
+        assert(self.field == [3, 7])
+
+    def test_iadd(self):
+        self.field.set([3, 5])
+        self.field += [7]
+        assert(self.field == [3, 5, 7])
+
+    def test_imul(self):
+        self.field.set([3, 5])
+        self.field *= 2
+        assert(self.field == [3, 5, 3, 5])
+
+    def test_reverse(self):
+        self.field.set([3, 5, 7])
+        self.field.reverse()
+        assert(self.field == [7, 5, 3])
+
+    def test_sort(self):
+        self.field.set([7, 2, 5, 3])
+        self.field.sort()
+        assert(self.field == [2, 3, 5, 7])
+
+    def test_extend(self):
+        self.field.set([3, 5, 7])
+        self.field.extend([8, 9])
+        assert(self.field == [3, 5, 7, 8, 9])
+
+    def test_insert(self):
+        self.field.set([3, 5, 7])
+        self.field.insert(2, 6)
+        assert(self.field == [3, 5, 6, 7])
+
+    def test_pop(self):
+        self.field.set([3, 5, 7])
+        r = self.field.pop()
+        assert(r == 7)
+        assert(self.field == [3, 5])
 
     def test_remove(self):
-        self.new_session.remove(self.new_gob)
-        popped_gob = self.new_session.operations['removals'].pop()
-        self.assertEqual(popped_gob.primary_key, self.gob_testkey)
+        self.field.set([3, 5, 7])
+        self.field.remove(5)
+        assert(self.field == [3, 7])
 
+    def test_append(self):
+        self.field.set([3, 5])
+        self.field.append(7)
+        assert(self.field == [3, 5, 7])
 
-    def test_addcollection(self):
-        path_key = str(uuid.uuid4())
-        new_path = tuple( ('new_collection', path_key) )
-        self.new_session.add_collection(new_path)
-        popped_path = self.new_session.operations['collection_additions'].pop()
-        self.assertEqual(popped_path, new_path)
-  
-    def test_removecollection(self):
-        path_key = str(uuid.uuid4())
-        new_path = tuple( ('dead_collection', path_key) )
-        self.new_session.remove_collection(new_path)
-        popped_path = self.new_session.operations['collection_removals'].pop()
-        self.assertEqual(popped_path, new_path)
+    def test_getitem(self):
+        self.field.set([3, 5, 7])
+        assert(self.field[1] == 5)
 
-    def test_updateobject(self):
-        cmp_gob = self.new_gob
-        cmp_gob.integer_field = 5678
-        cmp_gob.string_field = "waydifferent"
-        cmp_gob.boolean_field = False
+    def test_add(self):
+        self.field.set([3, 5])
+        assert(self.field + [7, 9] == [3, 5, 7, 9])
 
-        self.new_session._update_object(cmp_gob, self.new_gob)
-        self.assertEqual(cmp_gob, self.new_gob)
-    
-    def test_starttransaction(self):
-        cmp_operations = {
-            'additions': set(),
-            'removals': set(),
-            'updates': set(),
-            'collection_additions': set(),
-            'collection_removals': set()
-            }
-        self.new_session.add(self.new_gob)
-        self.new_session.update(self.new_gob)
-        self.new_session.remove(self.new_gob)
-        self.new_session.start_transaction()
-        self.assertEqual(cmp_operations, self.new_session.operations)
+    def test_radd(self):
+        self.field.set([3, 5])
+        assert([7, 9] + self.field == [7, 9, 3, 5])
 
-    def test_commit(self):
-        print '\nsession.Session.commit'
-        cmp_gob = self.new_gob
-        cmp_gob.integer_field = 5678
-        cmp_gob.string_field = "waydifferent"
-        cmp_gob.boolean_field = False
-        cmp_gob.unique_keys = [('timestamp_key', cmp_gob.timestamp_field)]
-        print '\n'
+    def test_mul(self):
+        self.field.set([3, 5])
+        assert(self.field * 2 == [3, 5, 3, 5])
 
-    def test_upload(self):
-        fp = open('sample.txt', 'r')
-        self.assertRaises(NotImplementedError, self.new_session.upload, self.new_gob, fp)
-    
-    def test_uploaditer(self):
-        fp = open('sample.txt', 'r')
-        self.assertRaises(NotImplementedError, self.new_session.upload_iter, self.new_gob, fp)
-    
-    def test_download(self):
-        print'\nSessionWorkout.test_download'
-        self.assertRaises(NotImplementedError, self.new_session.download, self.new_gob)
-        print '\n'
-        
-class BackendWorkout(unittest.TestCase):
-    
-    class GobTest(gob.Gob):
-        boolean_field = field.BooleanField()
-        string_field = field.StringField()
-        integer_field = field.IntegerField()
-        timestamp_field = field.TimestampField(unique=True)
+    def test_rmul(self):
+        self.field.set([3, 5])
+        assert(2 * self.field == [3, 5, 3, 5])
 
-        boolean_field.set(True)
-        string_field.set("outtacontrol")
-        integer_field.set(1234)
-
+class TestSetField(TestField, TestMultiField):
     def setUp(self):
-        self.new_gob = self.GobTest
-        self.gob_testkey = str(uuid.uuid4())
-        self.new_gob.primary_key = self.gob_testkey
-        self.new_session = session.Session(memcached.MemcachedBackend(expiry = 60, serializer = gserialize.JSONSerializer()), storage_engine=session.StorageEngine())
+        super(TestSetField, self).setUp()
+        self.field = self.gob.set_field
+        self.test_v = set([3, 7])
+        # set comparisons are actually tests for superset/subset
+        self.test_less = set([3])
 
-    def test_commit(self):
-        self.new_session.backend.commit()
+    def test_validate(self):
+        self.assertRaises(TypeError, self.field.set, 234)
+        self.assertRaises(TypeError, self.field.set, set(['abc']))
+        self.field.set(set([3, 7]))
+
+    def test_update(self):
+        self.field.set(set([3, 7]))
+        self.field.update(set([4, 5, 1]))
+        assert(self.field == set([1, 3, 4, 5, 7]))
+
+    def test_ior(self):
+        self.field.set(set([3, 7]))
+        self.field |= set([5])
+        assert(self.field == set([3, 5, 7]))
+
+    def test_intersection_update(self):
+        self.field.set(set([3, 7]))
+        self.field.intersection_update(set([3, 4]))
+        assert(self.field == set([3]))
+
+    def test_iand(self):
+        self.field.set(set([3, 7]))
+        self.field &= set([3, 4])
+        assert(self.field == set([3]))
+
+    def test_difference_update(self):
+        self.field.set(set([1, 3, 7]))
+        self.field.difference_update(set([1, 3]))
+        assert(self.field == set([7]))
+
+    def test_isub(self):
+        self.field.set(set([1, 3, 7]))
+        self.field -= set([1, 3])
+        assert(self.field == set([7]))
+
+    def test_symmetric_difference_update(self):
+        self.field.set(set([1, 3, 7]))
+        self.field.symmetric_difference_update(set([1, 3, 4]))
+        assert(self.field == set([4, 7]))
+
+    def test_ixor(self):
+        self.field.set(set([1, 3, 7]))
+        self.field ^= set([1, 3, 4])
+        assert(self.field == set([4, 7]))
+
+    def test_add(self):
+        self.field.set(set([3, 7]))
+        self.field.add(1)
+        assert(self.field == set([1, 3, 7]))
+
+    def test_remove(self):
+        self.field.set(set([1, 3, 7]))
+        self.field.remove(3)
+        assert(self.field == set([1, 7]))
+
+    def test_discard(self):
+        self.field.set(set([1, 3, 7]))
+        self.field.discard(3)
+        assert(self.field == set([1, 7]))
+        self.field.discard(4)
+        assert(self.field == set([1, 7]))
+
+    def test_pop(self):
+        self.field.set(set([1, 3, 7]))
+        r = self.field.pop()
+        assert(r in (1, 3, 7))
+        assert(len(self.field) == 2)
+
+    def test_clear(self):
+        self.field.set(set([1, 3, 7]))
+        self.field.clear()
+        assert(self.field == set([]))
+
+    def test_or(self):
+        self.field.set(set([3, 7]))
+        assert(self.field | set([5]) == set([3, 5, 7]))
+
+    def test_and(self):
+        self.field.set(set([3, 5, 7]))
+        assert(self.field & set([3, 4, 7]) == set([3, 7]))
+
+    def test_sub(self):
+        self.field.set(set([3, 5, 7]))
+        assert(self.field - set([2, 5]) == set([3, 7]))
+
+    def test_xor(self):
+        self.field.set(set([3, 5, 7]))
+        assert(self.field ^ set([2, 5]) == set([2, 3, 7]))
+
+    def test_copy(self):
+        self.field.set(set([3, 5, 7]))
+        r = self.field.copy()
+        assert(r is not self.field)
+        assert(self.field == r)
+
+class TestForeignObject(TestField, TestGob):
+    def setUp(self):
+        super(TestForeignObject, self).setUp()
+        self.gob.save()
+        self.gob2.save()
+        self.sc.commit()
+        self.field = self.gob2.parent
+        self.orig_gob = self.gob
+        self.gob = self.gob2.parent
+
+    def tearDown(self):
+        self.orig_gob.remove()
+        self.gob2.remove()
+        self.sc.commit()
+
+    def test_save(self):
+        self.gob.string_field = 'changed example string'
+        assert(self.gob.value.dirty)
+        self.gob.save()
+        self.sc.commit()
+        assert(not self.gob.value.dirty)
+        self.gob2.parent.forget()
+        gotten_gob = self.sc.gobtests.get(self.gob_key)
+        assert(gotten_gob.string_field == 'changed example string')
+        self.gob = self.gob2.parent
+
+    def test_remove(self):
+        self.gob.remove()
+        self.sc.commit()
+        try:
+            self.assertRaises(gobpersist.exception.NotFound,
+                              self.sc.gobtests.get, self.gob_key)
+        finally:
+            self.orig_gob.save()
+            self.sc.commit()
+
+    # override useless tests
+    def test_set(self):
+        pass
+    def test_null(self):
+        pass
+    def test_revert(self):
+        pass
+
+    # fixme: redefine these
+    def test_comparison(self):
+        pass
+    def test_hash(self):
+        pass
+    def test_forget(self):
+        pass
+
+class TestForeignCollection(TestField):
+    def setUp(self):
+        super(TestForeignCollection, self).setUp()
+        self.gob.save()
+        self.gob2.save()
+        self.sc.commit()
+        self.field = self.gob.children
+
+    def tearDown(self):
+        self.gob.remove()
+        self.gob2.remove()
+        self.sc.commit()
+
+    # override useless tests
+    def test_set(self):
+        pass
+    def test_null(self):
+        pass
+
+    # fixme: redefine these
+    def test_comparison(self):
+        pass
+    def test_hash(self):
+        pass
+    def test_forget(self):
+        pass
+
+    def test_list(self):
+        r = self.field.list()
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob2_key)
+        r = self.field.list(integer_field=97, string_field='example string 2')
+        assert(len(r) == 1)
+        assert(r[0].primary_key == self.gob2_key)
+        r = self.field.list(integer_field=101)
+        assert(len(r) == 0)
+
+    def test_get(self):
+        r = self.field.get(self.gob2_key)
+        assert(r.primary_key == self.gob2_key)
+
+    def test_add(self):
+        self.gob2.remove()
+        self.sc.commit()
+        self.field.add(self.gob2)
+        self.sc.commit()
+        r = self.field.get(self.gob2_key)
+        assert(r.primary_key == self.gob2_key)
+
+    def test_update(self):
+        self.gob2.string_field = 'changed example string 2'
+        self.field.update(self.gob2)
+        self.sc.commit()
+        r = self.field.get(self.gob2_key)
+        assert(r.string_field == 'changed example string 2'
+               and not r.string_field.dirty)
+
+    def test_remove(self):
+        self.field.remove(self.gob2)
+        self.sc.commit()
+        try:
+            self.assertRaises(gobpersist.exception.NotFound,
+                              self.field.get, self.gob2_key)
+        finally:
+            self.field.add(self.gob2)
+            self.sc.commit()
 
 if __name__ == '__main__':
     unittest.main()

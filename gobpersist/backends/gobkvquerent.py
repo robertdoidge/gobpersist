@@ -38,33 +38,31 @@ class GobKVQuerent(gobpersist.session.Backend):
         """Turn an argument into a value, iterator version."""
         if isinstance(arg, tuple):
             # identifier
-            if not path:
+            if path is None:
                 path = list(arg)
             value = gob
-            while path:
-                pathelem = path.pop(0)
-                if not isinstance(value, gobpersist.gob.Gob):
-                    raise gobpersist.exception.QueryError("Could not understand " \
-                                                              "identifier %s" \
-                                                              % repr(arg))
-                if isinstance(pathelem, gobpersist.field.Field):
-                    pathelem = getattr(value, pathelem.name)
-                else:
-                    pathelem = getattr(value, pathelem)
-                if isinstance(pathelem, gobpersist.field.ForeignObject):
-                    value = pathelem.value
-                elif isinstance(pathelem, gobpersist.field.ForeignCollection):
-                    for item in pathelem.list():
-                        for r in self._get_value_recursiter(item, arg, path):
-                            yield r
-                else:
-                    value = pathelem
-            if isinstance(value, gobpersist.gob.Gob):
+            if len(path) == 0:
+                raise gobpersist.exception.QueryError("Could not understand " \
+                                                          "identifier %s" \
+                                                          % repr(arg))
+            pathelem = path.pop(0)
+            if isinstance(pathelem, gobpersist.field.Field):
+                pathelem = getattr(value, pathelem._name)
+            else:
+                pathelem = getattr(value, pathelem)
+            if isinstance(pathelem, gobpersist.field.ForeignObject):
+                for r in self._get_value_recursiter(pathelem.value, arg, path):
+                    yield r
+            elif isinstance(pathelem, gobpersist.field.ForeignCollection):
+                for item in pathelem.list():
+                    for r in self._get_value_recursiter(item, arg, list(path)):
+                        yield r
+            elif len(path) != 0:
                 raise gobpersist.exception.QueryError("Could not understand " \
                                                           "identifier %s" \
                                                           % repr(arg))
             else:
-                yield value
+                yield pathelem
         else: # literal
             yield arg
 
@@ -165,7 +163,7 @@ class GobKVQuerent(gobpersist.session.Backend):
             elif cmd == 'or':
                 for subquery in args:
                     if self._execute_query(gob, subquery):
-                        continue
+                        return True
                 return False
             elif cmd in ('nor', 'not'):
                 for subquery in args:
@@ -204,12 +202,12 @@ class GobKVQuerent(gobpersist.session.Backend):
                                              % (key, repr(ordering)))
             res.sort(key=functools.cmp_to_key(order_cmp))
         for item in res:
+            if limit is not None and len(ret) == limit:
+                return ret
             if query is not None and not self._execute_query(item, query):
                 continue
             current += 1
             if offset is not None and current < offset:
                 continue
             ret.append(item)
-            if limit is not None and len(ret) == limit:
-                return ret
         return ret

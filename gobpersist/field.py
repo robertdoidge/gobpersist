@@ -44,6 +44,10 @@ class Field(object):
            ``primary_key`` (``bool``): Indicates whether or not this field
            is the primary key for this object.
 
+           ``name``: Hints at the name of this field, if different
+           from the variable name that refers to it.  Currently this
+           is broken; see :ref:`todo`.
+
            ``default``: Callable or scalar indicating the default value
            for this field.
 
@@ -59,6 +63,9 @@ class Field(object):
 
               A revision tag must be unchanged between reading the
               object and updating/removing the object.
+
+          ``modifiable``: Indicates whether or not this field can be
+          modified for update.
         """
         self.null = null
         """Whether or not the field may be ``None``."""
@@ -97,7 +104,8 @@ class Field(object):
 
         self.name = name
         """Hints at the name of this field, if different from the
-        variable name that refers to it."""
+        variable name that refers to it.  Currently this is broken;
+        see :ref:`todo`."""
 
         self.instance_key = None
         """The key used to store data on the instance."""
@@ -174,11 +182,12 @@ class Field(object):
 
     def revert(self):
         """Reverts this field to the persisted version."""
-        assert not self.immutable, "If %s.hash() is called, field is" \
-            " marked as immutable" % self._name
-        self.dirty = False
-        self.value = self.persisted_value
-        self.has_value = self.has_persisted_value
+        if self.dirty:
+            assert not self.immutable, "If %s.hash() is called, field is" \
+                " marked as immutable" % self._name
+            self.dirty = False
+            self.value = self.persisted_value
+            self.has_value = self.has_persisted_value
 
     def set(self, value):
         """Set this field to a specific value."""
@@ -208,7 +217,8 @@ class Field(object):
         """Create a clone of this field.
 
         Set ``clean_break`` to ``True`` in order to dissociate the
-        copy from the instance with which the original is associated.
+        copy from the gob instance with which the original is
+        associated.
         """
         ret = base_clone(self)
         ret.immutable = False
@@ -249,7 +259,8 @@ class Field(object):
     def __le__(self, other):
         return self.value <= other
     def __eq__(self, other):
-        return self.value == other
+        # order seems to matter here...
+        return other == self.value
     def __ne__(self, other):
         return self.value != other
     def __gt__(self, other):
@@ -404,16 +415,14 @@ class StringField(Field):
         if self.value_decoded:
             return self.value_decoded
         else:
-            return self.value.decode(encoding, *args, **kwargs)
+            return self.value.decode(self.encoding, *args, **kwargs)
 
     def encode(self, encoding='ascii', *args, **kwargs):
         # 'ascii' is the default python encoding
         if encoding == self.encoding:
             return self.value_encoded
         else:
-            return self.value_decoded.encode(encoding, *args, **kwargs) \
-                    if self.value_decoded is not None \
-                else self.value.encode(encoding, *args, **kwargs)
+            return self.decode().encode(encoding, *args, **kwargs)
 
     # provide string magic
 
@@ -426,7 +435,7 @@ class StringField(Field):
     def __getitem__(self, key):
         return self.value[key]
     def __iter__(self):
-        return self.value.__iter__()
+        return iter(self.value)
     def __reversed__(self):
         return reversed(self.value)
     def __contains__(self, item):
@@ -437,12 +446,14 @@ class StringField(Field):
         return other + self.value
     def __iadd__(self, other):
         self.set(self.value + other)
+        return self
     def __mul__(self, other):
         return self.value * other
     def __rmul__(self, other):
         return other * self.value
     def __imul__(self, other):
         self.set(self.value * other)
+        return self
 
 
 class NumericField(Field):
@@ -466,6 +477,7 @@ class NumericField(Field):
         return divmod(self.value, other)
     def __pow__(self, *args):
         return pow(self.value, *args)
+    # these only work for integral types
     def __lshift__(self, other):
         return self.value << other
     def __rshift__(self, other):
@@ -495,6 +507,7 @@ class NumericField(Field):
         return divmod(other, self.value)
     def __rpow__(self, other):
         return pow(other, self.value)
+    # these only work for integral types
     def __rlshift__(self, other):
         return other << self.value
     def __rrshift__(self, other):
@@ -508,30 +521,44 @@ class NumericField(Field):
     
     def __iadd__(self, other):
         self.set(self.value + other)
+        return self
     def __isub__(self, other):
         self.set(self.value - other)
+        return self
     def __imul__(self, other):
         self.set(self.value * other)
+        return self
     def __idiv__(self, other):
         self.set(self.value / other)
+        return self
     def __itruediv__(self, other):
         self.set(self.value / other)
+        return self
     def __ifloordiv__(self, other):
         self.set(self.value // other)
+        return self
     def __imod__(self, other):
         self.set(self.value % other)
+        return self
     def __ipow__(self, *args):
         self.set(pow(self.value, *args))
+        return self
+    # these only work for integral types
     def __ilshift__(self, other):
         self.set(self.value << other)
+        return self
     def __irshift__(self, other):
         self.set(self.value >> other)
+        return self
     def __iand__(self, other):
         self.set(self.value & other)
+        return self
     def __ixor__(self, other):
         self.set(self.value ^ other)
+        return self
     def __ior__(self, other):
         self.set(self.value | other)
+        return self
 
     def __neg__(self):
         return -self.value
@@ -539,6 +566,7 @@ class NumericField(Field):
         return +self.value
     def __abs__(self):
         return abs(self.value)
+    # this only works for integral types
     def __invert__(self):
         return ~self.value
     def __complex__(self):
@@ -550,6 +578,7 @@ class NumericField(Field):
     def __float__(self):
         return float(self.value)
 
+    # these only work for integral types
     def __oct__(self):
         return oct(self.value)
     def __hex__(self):
@@ -689,7 +718,7 @@ class EnumField(StringField):
             return
         if value not in self.choices:
             raise ValueError("'%s' not in choices for field '%s': %s" \
-                                 % (value, self._name, self.choices.join(", ")))
+                                 % (value, self._name, ", ".join(self.choices)))
 
 
 class UUIDField(StringField):
@@ -739,31 +768,39 @@ class MultiField(Field):
 
         super(MultiField, self).__init__(*args, **kwargs)
 
-    def trip_set(self):
-        for element in self.value:
-            element.trip_set()
-        super(MultiField, self).trip_set()
+    # def trip_set(self):
+    #     if self.value is not None:
+    #         for element in self.value:
+    #             immutable = element.immutable
+    #             element.immutable == False
+    #             element.trip_set()
+    #             element.immutable = immutable
+    #     super(MultiField, self).trip_set()
     def reset_state(self):
-        for element in self.value:
-            element.reset_state()
+        if self.value is not None:
+            for element in self.value:
+                element.reset_state()
         super(MultiField, self).reset_state()
     def mark_clean(self):
-        for element in self.value:
-            element.mark_clean()
+        if self.value is not None:
+            for element in self.value:
+                element.mark_clean()
         super(MultiField, self).mark_clean()
     def prepare_update(self):
         super(MultiField, self).prepare_update()
-        for element in self.value:
-            element.prepare_update()
+        if self.value is not None:
+            for element in self.value:
+                element.prepare_update()
     def prepare_add(self):
         super(MultiField, self).prepare_add()
-        for element in self.value:
-            element.prepare_add()
+        if self.value is not None:
+            for element in self.value:
+                element.prepare_add()
 
     # Provide sequence magic
 
     def __iter__(self):
-        return self.value.__iter__()
+        return iter(self.value)
     def __len__(self):
         return len(self.value)
     def __contains__(self, elem):
@@ -775,7 +812,8 @@ class ListField(MultiField):
 
     def clone(self, clean_break=False):
         copy = super(ListField, self).clone(clean_break)
-        copy.value = [element.clone(clean_break) for element in copy.value]
+        if copy.value is not None:
+            copy.value = [element.clone(clean_break) for element in copy.value]
         return copy
 
     def _set(self, value):
@@ -800,6 +838,7 @@ class ListField(MultiField):
             self.value += [self._element_to_field(element) for element in other]
         except TypeError:
             self.value += self._element_to_field(other)
+        return self
 
     def __imul__(self, other):
         self.trip_set()
@@ -812,6 +851,7 @@ class ListField(MultiField):
             currentvalue = base_clone(self.value)
             for dummy in xrange(1, other):
                 self.extend(currentvalue)
+        return self
 
     def reverse(self):
         self.trip_set()
@@ -842,9 +882,16 @@ class ListField(MultiField):
         self.trip_set()
         self.value.append(self._element_to_field(elem))
 
+    def revert(self):
+        if self.dirty:
+            super(ListField, self).revert()
+            if self.value is not None:
+                for element in self.value:
+                    element.revert()
+
     def __hash__(self):
         self.value = tuple(self.value)
-        return super(ListField, self).__hash__(self)
+        return super(ListField, self).__hash__()
 
 
     def __getitem__(self, key):
@@ -866,18 +913,19 @@ class SetField(MultiField):
 
     def clone(self, clean_break=False):
         copy = super(SetField, self).clone(clean_break)
-        copy.value = set([element.clone(clean_break) for element in copy.value])
+        if copy.value is not None:
+            copy.value = set([element.clone(clean_break) for element in copy.value])
         return copy
 
-    def _set(self, instance, value):
+    def _set(self, value):
         newvalue = set([self._element_to_field(element) for element in value])
-        super(SetField, self)._set(instance, newvalue)
+        super(SetField, self)._set(newvalue)
 
     def update(self, *others):
         self.trip_set()
-        self.value.update([[self._element_to_field(element) \
-                                for element in other] \
-                               for other in others])
+        self.value.update(*[[self._element_to_field(element) \
+                                 for element in other] \
+                                for other in others])
 
     def __ior__(self, other):
         self.trip_set()
@@ -886,12 +934,13 @@ class SetField(MultiField):
             self.value |= other
         self.value |= frozenset([self._element_to_field(element) \
                                      for element in other])
+        return self
 
     def intersection_update(self, *others):
         self.trip_set()
-        self.value.intersection_update([[self._element_to_field(element) \
-                                             for element in other] \
-                                            for other in others])
+        self.value.intersection_update(*[[self._element_to_field(element) \
+                                              for element in other] \
+                                             for other in others])
 
     def __iand__(self, other):
         self.trip_set()
@@ -900,12 +949,13 @@ class SetField(MultiField):
             self.value &= other
         self.value &= frozenset([self._element_to_field(element) \
                                      for element in other])
+        return self
 
     def difference_update(self, *others):
         self.trip_set()
-        self.value.difference_update([[self._element_to_field(element) \
-                                           for element in other] \
-                                          for other in others])
+        self.value.difference_update(*[[self._element_to_field(element) \
+                                            for element in other] \
+                                           for other in others])
 
     def __isub__(self, other):
         self.trip_set()
@@ -914,13 +964,14 @@ class SetField(MultiField):
             self.value -= other
         self.value -= frozenset([self._element_to_field(element) \
                                      for element in other])
+        return self
 
     def symmetric_difference_update(self, *others):
         self.trip_set()
         self.value.symmetric_difference_update(
-            [[self._element_to_field(element) \
-                  for element in other] \
-                 for other in others])
+            *[[self._element_to_field(element) \
+                   for element in other] \
+                  for other in others])
 
     def __ixor__(self, other):
         self.trip_set()
@@ -929,6 +980,7 @@ class SetField(MultiField):
             self.value ^= other
         self.value ^= frozenset([self._element_to_field(element) \
                                      for element in other])
+        return self
 
     def add(self, elem):
         self.trip_set()
@@ -942,7 +994,7 @@ class SetField(MultiField):
         self.trip_set()
         self.value.discard(elem)
 
-    def pop(self, elem):
+    def pop(self):
         self.trip_set()
         return self.value.pop()
 
@@ -960,11 +1012,11 @@ class SetField(MultiField):
         return self.value ^ other
 
     def copy(self):
-        return frozenset() + self.value
+        return frozenset() | self.value
 
     def __hash__(self):
         self.value = frozenset(self.value)
-        return super(ListField, self).__hash__(self)
+        return super(SetField, self).__hash__()
 
 
 class Foreign(Field):
@@ -1015,9 +1067,6 @@ class Foreign(Field):
 
         super(Foreign, self).__init__(name=name, modifiable=False)
 
-        del self.value
-
-
     def mark_persisted(self):
         pass
 
@@ -1042,12 +1091,12 @@ class Foreign(Field):
     # as if it were always-already set to the SchemaCollection or
     # Object.
 
-    def __setattribute__(self, name, value):
+    def __setattr__(self, name, value):
         # ensure that self.value never actually exists.
         if name == 'value':
             self._value = value
         else:
-            super(Foreign, self).__setattribute__(name, value)
+            super(Foreign, self).__setattr__(name, value)
 
     def fetch_value(self):
         """Fetches the appropriate foreign value on demand."""
@@ -1126,7 +1175,7 @@ class ForeignObject(Foreign):
             ret = self.instance.session.query(
                 cls=self.foreign_class,
                 query={'eq': [(self.foreign_field,),
-                              getattr(instance, self.local_field)]
+                              getattr(self.instance, self.local_field)]
                        })
         else:
             ret = self.instance.session.query(
@@ -1136,6 +1185,17 @@ class ForeignObject(Foreign):
             return ret[0]
         else:
             return None
+
+    def __setattr__(self, name, value):
+        # ensure that field settings go through the proper channels
+        if not hasattr(self, 'foreign_class'):
+            super(ForeignObject, self).__setattr__(name, value)
+            return
+        if isinstance(getattr(self.foreign_class, name, None),
+                      Field):
+            setattr(self.value, name, value)
+        else:
+            super(ForeignObject, self).__setattr__(name, value)
 
 
 class ForeignCollection(Foreign):

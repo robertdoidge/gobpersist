@@ -16,11 +16,11 @@ application.
 
 In 1970, Codd published "A Relational Model of Data for Large Shared
 Data Banks," insisting that data be represented as atomic tuples, with
-no differentiation between key and data, and a separation of concerns
-between the interface to and the actual storage of data.  SQL
-(Structured Query Language), following shortly thereafter, offered a
-universal interface to databases following the relational model.  For
-a while, then, we had a de facto standard data model based on a
+no differentiation between key and data, and that there be separation
+of concerns between the interface to and the actual storage of data.
+SQL (Structured Query Language), following shortly thereafter, offered
+a universal interface to databases following the relational model.
+For a while, then, we had a de facto standard data model based on a
 monolithic data server that knows everything about how data is stored
 but nothing about what to do with it, and a client that knows
 everything about what to do with the data but nothing about how it is
@@ -142,7 +142,7 @@ License
 -------
 
 Gobpersist is released under the LGPLv2.1 license.  If this doesn't
-suit your needs, contact open-source@accellion.com.
+suit your needs, contact opensource@accellion.com.
 
 Credits
 -------
@@ -153,7 +153,7 @@ will continue to actively develop Gobpersist in the foreseeable
 future, pushing the envelope to achieve an innovative, stable,
 scalable, secure---and hopefully, pretty---system.
 
-Email open-source@accellion.com for more information about open source
+Email opensource@accellion.com for more information about open source
 at Accellion.
 
 The current maintainer is Evan Buswell <evan.buswell@accellion.com>.

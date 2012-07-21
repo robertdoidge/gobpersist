@@ -304,28 +304,38 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         for update in updates:
             gob = update['gob']
             gob_key = self.key_to_mykey(gob.obj_key)
+            old_gob_key = self.key_to_mykey(gob.obj_key, True)
             locks.add(self.lock_prefix + self.separator + self.separator.join(gob_key))
-            to_set.append((gob_key, self.gob_to_mygob(gob)))
-            for key in gob.unique_keyset():
-                for f in key:
-                    if isinstance(f, gobpersist.field.Field) and f.dirty:
-                        new_key = self.key_to_mykey(key)
-                        old_key = self.key_to_mykey(key, True)
-                        locks.add(self.lock_prefix + self.separator + self.separator.join(new_key))
-                        locks.add(self.lock_prefix + self.separator + self.separator.join(old_key))
-                        to_delete.append(old_key)
-                        to_add.append((new_key, gob_key))
-                        break
-            for key in gob.keyset():
-                for f in key:
-                    if isinstance(f, gobpersist.field.Field) and f.dirty:
-                        new_key = self.key_to_mykey(key)
-                        old_key = self.key_to_mykey(key, True)
-                        locks.add(self.lock_prefix + self.separator + self.separator.join(new_key))
-                        locks.add(self.lock_prefix + self.separator + self.separator.join(old_key))
-                        collection_remove.append((old_key, gob_key))
-                        collection_add.append((new_key, gob_key))
-                        break
+            if old_gob_key != gob_key:
+                locks.add(self.lock_prefix + self.separator + self.separator.join(old_gob_key))
+                to_delete.append(old_gob_key)
+                to_add.append((gob_key, self.gob_to_mygob(gob)))
+            else:
+                to_set.append((gob_key, self.gob_to_mygob(gob)))
+            old_u_keys = set([self.key_to_mykey(k, True)
+                              for k in gob.unique_keyset(True)])
+            new_u_keys = set([self.key_to_mykey(k)
+                              for k in gob.unique_keyset()])
+            old_u_keys, new_u_keys \
+                = old_u_keys - new_u_keys, new_u_keys - old_u_keys
+            for key in new_u_keys:
+                to_add.append((key, gob_key))
+                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
+            for key in old_u_keys:
+                to_delete.append(key)
+                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
+            old_keys = set([self.key_to_mykey(k, True)
+                              for k in gob.keyset(True)])
+            new_keys = set([self.key_to_mykey(k)
+                              for k in gob.keyset()])
+            old_keys, new_keys \
+                = old_keys - new_keys, new_keys - old_keys
+            for key in new_keys:
+                collection_add.append((key, gob_key))
+                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
+            for key in old_keys:
+                collection_delete.append((key, old_gob_key))
+                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
             if 'add_keys' in update:
                 for key in itertools.imap(self.key_to_mykey,
                                            update['add_keys']):
@@ -349,7 +359,7 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
 
         for removal in removals:
             gob = removal['gob']
-            gob_key = self.key_to_mykey(gob.obj_key)
+            gob_key = self.key_to_mykey(gob.obj_key, True)
             locks.add(self.lock_prefix + self.separator + self.separator.join(gob_key))
             to_delete.append(gob_key)
             if 'remove_keys' in removal:
@@ -363,11 +373,11 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
                     locks.add(self.lock_prefix + self.separator + self.separator.join(key))
                     to_delete.append(key)
             for key in itertools.imap(lambda x: self.key_to_mykey(x, True),
-                                      gob.keyset()):
+                                      gob.keyset(True)):
                 locks.add(self.lock_prefix + self.separator + self.separator.join(key))
                 collection_remove.append((key, gob_key))
             for key in itertools.imap(lambda x: self.key_to_mykey(x, True),
-                                      gob.unique_keys):
+                                      gob.unique_keyset(True)):
                 locks.add(self.lock_prefix + self.separator + self.separator.join(key))
                 to_delete.append(key)
 
@@ -378,6 +388,7 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
         for key in itertools.imap(self.key_to_mykey, collection_removals):
             locks.add(self.lock_prefix + self.separator + self.separator.join(key))
             to_delete.append(key)
+
 
         # Acquire locks
         self.acquire_locks(locks)
@@ -421,11 +432,6 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
             #     "locks:", locks, "conditions:", conditions
 
             with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
-                add_multi = {}
-                for add in to_add:
-                    add_multi[self.separator.join(add[0])] = self.serializer.dumps(add[1])
-                # no add_multi??
-                mc.set_multi(add_multi, self.expiry)
                 c_addsrms = mc.get_multi([self.separator.join(c_add[0]) \
                                                    for c_add \
                                                    in itertools.chain(
@@ -453,8 +459,13 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
                 for setting in to_set:
                     set_multi[self.separator.join(setting[0])] \
                         = self.serializer.dumps(setting[1])
-                mc.set_multi(set_multi, self.expiry)
                 mc.delete_multi([self.separator.join(delete) for delete in to_delete])
+                mc.set_multi(set_multi, self.expiry)
+                add_multi = {}
+                for add in to_add:
+                    add_multi[self.separator.join(add[0])] = self.serializer.dumps(add[1])
+                # no add_multi??
+                mc.set_multi(add_multi, self.expiry)
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)

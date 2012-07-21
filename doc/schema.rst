@@ -320,10 +320,9 @@ Cascading updates
 
 Foreign fields, however, are not just about access.  Gobpersist also
 provides a mechanism to make sure that consistency is maintained
-across different objects: :attr:`consistency` and
-:attr:`set_consistency`, for objects and collections, respectively.
-These attributes specify what effect adding objects, deleting objects,
-or changing certain fields on an object will have.
+across different objects.  The :attr:`consistency` attribute specifies
+what effect adding objects, deleting objects, or changing certain
+fields on an object will have.
 
 Using our simple web store example, what happens when we delete a
 :class:`WebstoreItem` that was a user's favorite?  Ideally, we would

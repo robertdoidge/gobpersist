@@ -54,7 +54,11 @@ Using a schema
 Sessions are most often used by :class:`Schema` objects, which provide
 a simpler, but more simplistic, interface than :class:`Session
 <gobpersist.session.Session>` objects.  For more on schemas, see
-:ref:`schema`.
+:ref:`schema`.  :class:`Schema` objects proxy unknown calls to the
+:class:`Session <gobpersist.session.Session>` objects with which they
+are associated, so you can use a :class:`Schema` object anywhere that
+you would normally use a :class:`Session
+<gobpersist.session.Session>` object.
 
 To create a schema, you must first create a session.  You create the
 schema passing in the session objects through which the schema will

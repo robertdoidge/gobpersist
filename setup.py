@@ -62,7 +62,7 @@ setup(
     description      = 'Generic OBject Persistence---an ORM-like interface to NoSQL (or SQL)',
     long_description = long_description,
     author           = 'Accellion, Inc.',
-    author_email     = 'open-source@accellion.com',
+    author_email     = 'opensource@accellion.com',
     maintainer       = 'Evan Buswell',
     maintainer_email = 'evan.buswell@accellion.com',
     url              = 'http://gobpersist.github.com',
@@ -97,6 +97,7 @@ setup(
         'Topic :: System :: Clustering',
         'Topic :: System :: Distributed Computing'
     ],
+    test_suite       = 'gobpersist.test',
     packages         = find_packages(exclude=[]),
     zip_safe         = True # only makes sense to setuputils/distribute
 )
