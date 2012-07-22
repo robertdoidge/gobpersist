@@ -68,7 +68,7 @@ setup(
     url              = 'http://accellion.github.com/gobpersist',
     download_url     = 'http://github.com/accellion/gobpersist/downloads',
     keywords         = ['database', 'NoSQL', 'ORM', 'O/RM', 'gobpersist', 'gob'],
-    requires         = ['iso8601.py'],
+    install_requires = ['iso8601.py'],
     extras_require   = { # only makes sense to setuputils/distribute
         'memcached': ['pylibmc'],
         'tokyo tyrant': ['pytyrant']
