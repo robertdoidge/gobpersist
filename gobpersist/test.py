@@ -1524,4 +1524,6 @@ class TestForeignCollection(TestField):
             self.sc.commit()
 
 if __name__ == '__main__':
-    unittest.main()
+    # import cProfile
+    # cProfile.run('unittest.main()', sort='cumulative')
+   unittest.main()

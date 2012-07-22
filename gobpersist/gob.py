@@ -184,6 +184,7 @@ class Gob(object):
                 if isinstance(value, gobpersist.field.Foreign):
                     if value.foreign_class == 'self':
                         value.foreign_class = cls
+                        value.reload_field()
 
         cls.primary_key = primary_key
 

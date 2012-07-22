@@ -1067,6 +1067,9 @@ class Foreign(Field):
 
         super(Foreign, self).__init__(name=name, modifiable=False)
 
+    def reload_field(self):
+        pass
+
     def mark_persisted(self):
         pass
 
@@ -1169,6 +1172,22 @@ class Foreign(Field):
 
 class ForeignObject(Foreign):
     """A field to represent a foreign object."""
+    valid_setattrs = set()
+
+    def __init__(self, *args, **kwargs):
+        """
+        Args:
+           See :class:`Foriegn`
+        """
+        self.valid_setattrs = set()
+        super(ForeignObject, self).__init__(*args, **kwargs)
+        self.reload_field()
+
+    def reload_field(self):
+        for name in dir(self.foreign_class):
+            if isinstance(getattr(self.foreign_class, name, None),
+                          Field):
+                self.valid_setattrs.add(name)
 
     def fetch_value(self):
         if self.key is None:
@@ -1187,12 +1206,7 @@ class ForeignObject(Foreign):
             return None
 
     def __setattr__(self, name, value):
-        # ensure that field settings go through the proper channels
-        if not hasattr(self, 'foreign_class'):
-            super(ForeignObject, self).__setattr__(name, value)
-            return
-        if isinstance(getattr(self.foreign_class, name, None),
-                      Field):
+        if name in self.valid_setattrs:
             setattr(self.value, name, value)
         else:
             super(ForeignObject, self).__setattr__(name, value)

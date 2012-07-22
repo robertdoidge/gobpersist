@@ -24,14 +24,14 @@ import operator
 import functools
 import types
 
-import gobpersist.session
 import gobpersist.gob
 import gobpersist.exception
 import gobpersist.field
+import gobpersist.session
 
 class GobKVQuerent(gobpersist.session.Backend):
-    """Abstract superclass (or pluggable back end) for classes that
-    aren't able to implement complex queries.
+    """Abstract superclass for classes that aren't able to implement
+    complex queries.
     """
 
     def _get_value_recursiter(self, gob, arg, path=None):

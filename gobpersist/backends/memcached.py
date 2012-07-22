@@ -22,6 +22,7 @@ memcached protocol.
 
 import time
 import cPickle as pickle
+import json
 import datetime
 import itertools
 import functools
@@ -29,6 +30,7 @@ import functools
 import pylibmc
 
 import gobpersist.backends.gobkvquerent
+import gobpersist.backends.gobkvbackend
 import gobpersist.backends.pools
 import gobpersist.backends.cache
 import gobpersist.exception
@@ -41,13 +43,24 @@ class PickleWrapper(object):
     def dumps(obj):
         return pickle.dumps(obj, pickle.HIGHEST_PROTOCOL)
 
+class JsonWrapper(object):
+    @staticmethod
+    def loads(str):
+        return json.loads(str)
+
+    @staticmethod
+    def dumps(obj):
+        return json.dumps(obj, default=(lambda x: x.isoformat() if isinstance(x, datetime.datetime)
+                                 else list(x) if isinstance(x, (set, frozenset))
+                                 else x))
+
 default_pool = gobpersist.backends.pools.SimpleThreadMappedPool(client=pylibmc.Client)
 
-class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
+class MemcachedBackend(gobpersist.backends.gobkvbackend.GobKVBackend):
     """Gob back end which uses memcached for storage"""
 
     def __init__(self, servers=['127.0.0.1'], expiry=0, binary=True,
-                 serializer=PickleWrapper, lock_prefix='_lock',
+                 serializer=JsonWrapper, lock_prefix='_lock',
                  pool=default_pool, separator='.', lock_tries=8,
                  lock_backoff=0.25, *args, **kwargs):
         """
@@ -262,216 +275,134 @@ class MemcachedBackend(gobpersist.backends.gobkvquerent.GobKVQuerent):
                               else str(keyelem) \
                           for keyelem in mykey])
 
-    def commit(self, additions=[], updates=[], removals=[],
-               collection_additions=[], collection_removals=[]):
+    def kv_commit(self, add_gobs={}, update_gobs={}, remove_gobs={}, add_keys=set(), remove_keys=set(),
+                  add_unique_keys={}, update_unique_keys={}, remove_unique_keys={},
+                  collection_additions=set(), collection_removals=set(), conditions={},
+                  affected_keys=set()):
+        # print "kv_commit(add_gobs=%s, update_gobs=%s, remove_gobs=%s, " \
+        #     "add_keys=%s, remove_keys=%s, add_unique_keys=%s, " \
+        #     "update_unique_keys=%s, remove_unique_keys=%s, " \
+        #     "collection_additions=%s, collection_removals=%s, " \
+        #     "conditions=%s, affected_keys=%s" \
+        #     % (add_gobs, update_gobs, remove_gobs, add_keys, remove_keys,
+        #        add_unique_keys, update_unique_keys, remove_unique_keys,
+        #        collection_additions, collection_removals,
+        #        conditions, affected_keys)
+
         # Build the set of commits
-        to_set = []
-        to_add = []
+        to_set = {}
+        to_add = {}
         to_delete = []
-        collection_add = []
-        collection_remove = []
-        locks = set()
-        conditions = []
+        # don't do dumps on these keys yet, since we have to compare
+        # them for equality
+        collection_add = [(self.separator.join(self.key_to_mykey(k)),
+                           self.key_to_mykey(v))
+                          for k, v in add_keys]
+        collection_remove = [(self.separator.join(self.key_to_mykey(k)),
+                              self.key_to_mykey(v))
+                             for k, v in remove_keys]
+        locks = [self.lock_prefix + self.separator + self.separator.join(self.key_to_mykey(key))
+                 for key in affected_keys]
 
-        for addition in additions:
-            gob = addition['gob']
-            gob_key = self.key_to_mykey(gob.obj_key)
-            locks.add(self.lock_prefix + self.separator + self.separator.join(gob_key))
-            to_add.append((gob_key, self.gob_to_mygob(gob)))
-            if 'add_unique_keys' in addition:
-                add_unique_keys = itertools.chain(
-                    gob.unique_keyset(),
-                    addition['add_unique_keys'])
-            else:
-                add_unique_keys = gob.unique_keyset()
-            if 'add_keys' in addition:
-                add_keys = itertools.chain(
-                    gob.keyset(),
-                    addition['add_keys'])
-            else:
-                add_keys = gob.keyset()
-            for key in itertools.imap(
-                    self.key_to_mykey,
-                    add_unique_keys):
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                to_add.append((key, gob_key))
-            for key in itertools.imap(
-                    self.key_to_mykey,
-                    add_keys):
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                collection_add.append((key, gob_key))
-
-        for update in updates:
-            gob = update['gob']
-            gob_key = self.key_to_mykey(gob.obj_key)
-            old_gob_key = self.key_to_mykey(gob.obj_key, True)
-            locks.add(self.lock_prefix + self.separator + self.separator.join(gob_key))
-            if old_gob_key != gob_key:
-                locks.add(self.lock_prefix + self.separator + self.separator.join(old_gob_key))
-                to_delete.append(old_gob_key)
-                to_add.append((gob_key, self.gob_to_mygob(gob)))
-            else:
-                to_set.append((gob_key, self.gob_to_mygob(gob)))
-            old_u_keys = set([self.key_to_mykey(k, True)
-                              for k in gob.unique_keyset(True)])
-            new_u_keys = set([self.key_to_mykey(k)
-                              for k in gob.unique_keyset()])
-            old_u_keys, new_u_keys \
-                = old_u_keys - new_u_keys, new_u_keys - old_u_keys
-            for key in new_u_keys:
-                to_add.append((key, gob_key))
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-            for key in old_u_keys:
-                to_delete.append(key)
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-            old_keys = set([self.key_to_mykey(k, True)
-                              for k in gob.keyset(True)])
-            new_keys = set([self.key_to_mykey(k)
-                              for k in gob.keyset()])
-            old_keys, new_keys \
-                = old_keys - new_keys, new_keys - old_keys
-            for key in new_keys:
-                collection_add.append((key, gob_key))
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-            for key in old_keys:
-                collection_delete.append((key, old_gob_key))
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-            if 'add_keys' in update:
-                for key in itertools.imap(self.key_to_mykey,
-                                           update['add_keys']):
-                    locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                    collection_add.append((key, gob_key))
-            if 'add_unique_keys' in update:
-                for key in itertools.imap(self.key_to_mykey,
-                                           update['add_unique_keys']):
-                    locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                    to_add.append((key, gob_key))
-            if 'remove_keys' in update:
-                for key in itertools.imap(self.key_to_mykey,
-                                           update['remove_keys']):
-                    locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                    collection_remove.append((key, gob_key))
-            if 'remove_unique_keys' in update:
-                for key in itertools.imap(self.key_to_mykey,
-                                           update['remove_unique_keys']):
-                    locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                    to_delete.append(key)
-
-        for removal in removals:
-            gob = removal['gob']
-            gob_key = self.key_to_mykey(gob.obj_key, True)
-            locks.add(self.lock_prefix + self.separator + self.separator.join(gob_key))
-            to_delete.append(gob_key)
-            if 'remove_keys' in removal:
-                for key in itertools.imap(self.key_to_mykey,
-                                          removal['remove_keys']):
-                    locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                    collection_remove.append((key, gob_key))
-            if 'remove_unique_keys' in removal:
-                for key in itertools.imap(self.key_to_mykey,
-                                          removal['remove_unique_keys']):
-                    locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                    to_delete.append(key)
-            for key in itertools.imap(lambda x: self.key_to_mykey(x, True),
-                                      gob.keyset(True)):
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                collection_remove.append((key, gob_key))
-            for key in itertools.imap(lambda x: self.key_to_mykey(x, True),
-                                      gob.unique_keyset(True)):
-                locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-                to_delete.append(key)
-
-        for key in itertools.imap(self.key_to_mykey, collection_additions):
-            locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-            to_add.append((key, []))
-
-        for key in itertools.imap(self.key_to_mykey, collection_removals):
-            locks.add(self.lock_prefix + self.separator + self.separator.join(key))
-            to_delete.append(key)
-
+        for k in collection_additions:
+            to_add[self.separator.join(self.key_to_mykey(k))] = self.serializer.dumps([])
+        for k in collection_removals:
+            to_delete.append(self.separator.join(self.key_to_mykey(k)))
+        for k, v in add_gobs.iteritems():
+            to_add[self.separator.join(self.key_to_mykey(k))] = self.serializer.dumps(self.gob_to_mygob(v))
+        for k, v in update_gobs.iteritems():
+            to_set[self.separator.join(self.key_to_mykey(k))] = self.serializer.dumps(self.gob_to_mygob(v[1]))
+        for k in remove_gobs.iterkeys():
+            to_delete.append(self.separator.join(self.key_to_mykey(k)))
+        for k, v in add_unique_keys.iteritems():
+            to_add[self.separator.join(self.key_to_mykey(k))] = self.serializer.dumps(self.key_to_mykey(v))
+        for k, v in update_unique_keys.iteritems():
+            to_set[self.separator.join(self.key_to_mykey(k))] = self.serializer.dumps(self.key_to_mykey(v[1]))
+        for k in remove_unique_keys.iterkeys():
+            to_delete.append(self.separator.join(self.key_to_mykey(k)))
+        # print "to_set=%s, to_add=%s, to_delete=%s, collection_add=%s, collection_remove=%s, locks=%s" \
+        #     % (to_set, to_add, to_delete, collection_add, collection_remove, locks)
 
         # Acquire locks
         self.acquire_locks(locks)
         try:
             
             # Check all conditions
-            for alteration in itertools.chain(updates, removals):
-                if 'conditions' in alteration:
-                    try:
-                        res = self.kv_query(alteration['gob'].__class__,
-                                            alteration['gob'].obj_key)
-                        if len(res) == 0:
-                            # A collection instead of an object??
-                            # This indicates some kind of corruption...
-                            raise gobpersist.exception.Corruption(
-                                "Key %s indicates an empty collection" \
-                                    " instead of an object." \
-                                    % repr(alteration['gob'].obj_key))
-                        gob = res[0]
-                        if not self._execute_query(gob,
-                                                   alteration['conditions']):
-                            raise gobpersist.exception.ConditionFailed(
-                                "The conditions '%s' could not be met for" \
-                                    " object '%s'" \
-                                    % (repr(alteration['conditions']),
-                                       repr(gob)))
-                    except gobpersist.exception.NotFound:
-                        # Since this is memcached, we should be
-                        # lax about missing values
-                        # raise gobpersist.exception.ConditionFailed(
-                        #     "The conditions '%s' could not be met for" \
-                        #         " object '%s', as the object could not be found" \
-                        #         % (repr(alteration['conditions']),
-                        #            repr(alteration['gob'].obj_key)))
-                        continue
+            for key, condition in conditions:
+                if key in update_gobs:
+                    gob = update_gobs[key][0]
+                elif key in remove_gobs:
+                    gob = remove_gobs[key]
+                else:
+                    raise gobpersist.exception.Corruption(
+                        "Got a commit condition without a"
+                        " corresponding gob object.")
+                try:
+                    res = self.kv_query(gob.__class__, key)
+                    if len(res) == 0:
+                        # A collection instead of an object??
+                        # This indicates some kind of corruption...
+                        raise gobpersist.exception.Corruption(
+                            "Key %s indicates an empty collection" \
+                                " instead of an object." \
+                                % repr(alteration['gob'].obj_key))
+                    gob = res[0]
+                    if not self._execute_query(gob, condition):
+                        raise gobpersist.exception.ConditionFailed(
+                            "The conditions '%s' could not be met for" \
+                                " object '%s'" \
+                                % (repr(condition),
+                                   repr(gob)))
+                except gobpersist.exception.NotFound:
+                    # Since this is memcached, we should be
+                    # lax about missing values
+                    # raise gobpersist.exception.ConditionFailed(
+                    #     "The conditions '%s' could not be met for" \
+                    #         " object '%s', as the object could not be found" \
+                    #         % (repr(alteration['conditions']),
+                    #            repr(alteration['gob'].obj_key)))
+                    continue
 
             # Conditions pass! Actually perform the actions
-            # print "to_set:", to_set, "to_add:", to_add, \
-            #     "to_delete:", to_delete, "collection_add:", collection_add, \
-            #     "collection_remove:", collection_remove, \
-            #     "locks:", locks, "conditions:", conditions
 
             with self.pool.reserve(*self.mc_args, **self.mc_kwargs) as mc:
-                c_addsrms = mc.get_multi([self.separator.join(c_add[0]) \
-                                                   for c_add \
-                                                   in itertools.chain(
-                                                       collection_add,
-                                                       collection_remove)])
+                c_addsrms = mc.get_multi([c_add[0]
+                                          for c_add in itertools.chain(
+                                              collection_add,
+                                              collection_remove)])
                 for key in c_addsrms:
                     c_addsrms[key] \
                         = set([tuple(path)
                                for path in self.serializer.loads(c_addsrms[key])])
                 for c_add in collection_add:
-                    key = self.separator.join(c_add[0])
+                    key = c_add[0]
                     if key in c_addsrms:
                         res = c_addsrms[key]
                     else:
                         res = c_addsrms[key] = set()
                     res.add(c_add[1])
                 for c_rm in collection_remove:
-                    key = self.separator.join(c_add[0])
+                    key = c_rm[0]
                     if key in c_addsrms:
                         res = c_addsrms[key]
                         res.discard(c_rm[1])
-                set_multi = {}
+                    else:
+                        # trying to remove from a key not in the db
+                        # be lax since this is memcached
+                        pass
                 for k, v in c_addsrms.iteritems():
-                    set_multi[k] = self.serializer.dumps(list(v))
-                for setting in to_set:
-                    set_multi[self.separator.join(setting[0])] \
-                        = self.serializer.dumps(setting[1])
-                mc.delete_multi([self.separator.join(delete) for delete in to_delete])
-                mc.set_multi(set_multi, self.expiry)
-                add_multi = {}
-                for add in to_add:
-                    add_multi[self.separator.join(add[0])] = self.serializer.dumps(add[1])
+                    to_set[k] = self.serializer.dumps(list(v))
+                # print "to_set=%s, to_add=%s, to_delete=%s" \
+                #     % (to_set, to_add, to_delete)
+                mc.delete_multi(to_delete)
+                mc.set_multi(to_set, self.expiry)
                 # no add_multi??
-                mc.set_multi(add_multi, self.expiry)
+                mc.set_multi(to_add, self.expiry)
         finally:
             # Done.  Release the locks.
             self.release_locks(locks)
         # memcached never changes items on update
         return []
-
 
 class MemcachedCache(MemcachedBackend, gobpersist.backends.cache.Cache):
     """A cache backend based on Memcached."""
