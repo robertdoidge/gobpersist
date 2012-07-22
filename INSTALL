@@ -6,7 +6,8 @@ installed. Then run this command from the command prompt::
 If you're upgrading from a previous version, you need to remove it
 first.
 
-This project uses the iso8601 module, available at XXXXXX.
+This project uses the iso8601.py module, available at
+https://github.com/accellion/iso8601.py/downloads.
 
 Though it is not a requirement, it is highly suggested that you have
 `Distribute <http://packages.python.org/distribute>`_ installed.
