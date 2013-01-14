@@ -1016,10 +1016,6 @@ class TestNumericField(object):
         self.field.set(self.test_v)
         self.field //= self.test_less
         assert(self.field == self.test_v // self.test_less)
-    def test_mod(self):
-        self.field.set(self.test_v)
-        self.field %= self.test_less
-        assert(self.field == self.test_v % self.test_less)
     def test_ipow(self):
         self.field.set(self.test_v)
         self.field **= self.test_less
